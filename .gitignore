@@ -3,6 +3,7 @@ node_modules/
 desktop/out/
 desktop/dist/
 desktop/.vite/
+*.tsbuildinfo
 
 # Python
 backend/.venv/
