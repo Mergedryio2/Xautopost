@@ -5,18 +5,32 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# softprops/action-gh-release@v2 needs to create / edit Release objects
+# and attach binaries; default GITHUB_TOKEN scope is read-only since 2023.
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
         include:
+          # macos-latest is Apple Silicon (arm64). PyInstaller bundles the
+          # host-arch Python binary, so we run a second job on macos-13
+          # (Intel) for the x64 .dmg.
           - os: macos-latest
             target: mac
-            artifact: 'desktop/dist/*.dmg'
+            artifact: 'desktop/dist/*-arm64.dmg'
+            extra_arch_flag: '--arm64'
+          - os: macos-13
+            target: mac
+            artifact: 'desktop/dist/*-x64.dmg'
+            extra_arch_flag: '--x64'
           - os: windows-latest
             target: win
             artifact: 'desktop/dist/*.exe'
+            extra_arch_flag: ''
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -40,23 +54,31 @@ jobs:
         working-directory: desktop
         run: npm ci
 
-      - name: Build (mac)
+      - name: Build backend bundle (PyInstaller)
+        working-directory: desktop
+        run: npm run build:backend
+
+      - name: Build renderer bundle (Vite)
+        working-directory: desktop
+        run: npx electron-vite build
+
+      - name: Package (mac)
         if: matrix.target == 'mac'
         working-directory: desktop
-        run: npm run build:mac
+        run: npx electron-builder --mac ${{ matrix.extra_arch_flag }}
         env:
           # Skip code signing — produces unsigned .dmg
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
-      - name: Build (win)
+      - name: Package (win)
         if: matrix.target == 'win'
         working-directory: desktop
-        run: npm run build:win
+        run: npx electron-builder --win
 
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target }}-installer
+          name: ${{ matrix.os }}-installer
           path: ${{ matrix.artifact }}
           if-no-files-found: error
 
