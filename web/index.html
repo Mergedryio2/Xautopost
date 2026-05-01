@@ -138,6 +138,18 @@
         box-shadow: var(--shadow-md);
         border-color: var(--primary);
       }
+      .download-card[aria-disabled='true'] {
+        opacity: 0.55;
+        cursor: not-allowed;
+        pointer-events: none;
+      }
+      .download-card.is-unavailable {
+        opacity: 0.85;
+        pointer-events: auto;
+      }
+      .download-card.is-unavailable .download-cta {
+        background: var(--muted);
+      }
       .download-card.recommended {
         border-color: var(--primary-strong);
         background: linear-gradient(180deg, white, var(--primary-soft));
@@ -174,9 +186,11 @@
         margin: 0;
       }
       .download-cta {
-        margin-top: 12px;
-        display: inline-block;
-        padding: 8px 16px;
+        margin-top: 14px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 18px;
         background: linear-gradient(
           135deg,
           var(--primary),
@@ -184,9 +198,22 @@
         );
         color: white;
         border-radius: 12px;
-        font-weight: 600;
-        font-size: 13px;
+        font-weight: 700;
+        font-size: 14px;
         align-self: flex-start;
+        box-shadow: 0 4px 12px rgba(232, 121, 168, 0.25);
+      }
+      .download-card:hover .download-cta {
+        box-shadow: 0 6px 18px rgba(232, 121, 168, 0.35);
+      }
+      .download-cta::before {
+        content: '↓';
+        font-size: 16px;
+        line-height: 1;
+      }
+      .download-card.is-loading .download-cta::before,
+      .download-card.is-unavailable .download-cta::before {
+        content: '';
       }
 
       .features {
@@ -277,20 +304,38 @@
       </section>
 
       <section class="download-grid" id="downloads">
-        <a class="download-card" data-os="mac-arm" href="#">
+        <a
+          class="download-card is-loading"
+          data-os="mac-arm"
+          href="#"
+          aria-disabled="true"
+          download
+        >
           <h2 class="download-os">Mac · Apple Silicon</h2>
           <p class="download-meta">.dmg · arm64 (M1/M2/M3/M4)</p>
-          <span class="download-cta">ดาวน์โหลด</span>
+          <span class="download-cta">กำลังโหลด…</span>
         </a>
-        <a class="download-card" data-os="mac-intel" href="#">
+        <a
+          class="download-card is-loading"
+          data-os="mac-intel"
+          href="#"
+          aria-disabled="true"
+          download
+        >
           <h2 class="download-os">Mac · Intel</h2>
           <p class="download-meta">.dmg · x64</p>
-          <span class="download-cta">ดาวน์โหลด</span>
+          <span class="download-cta">กำลังโหลด…</span>
         </a>
-        <a class="download-card" data-os="win" href="#">
+        <a
+          class="download-card is-loading"
+          data-os="win"
+          href="#"
+          aria-disabled="true"
+          download
+        >
           <h2 class="download-os">Windows</h2>
           <p class="download-meta">.exe · x64</p>
-          <span class="download-cta">ดาวน์โหลด</span>
+          <span class="download-cta">กำลังโหลด…</span>
         </a>
       </section>
 
@@ -383,40 +428,78 @@
           ?.classList.add('recommended')
       }
 
-      // Fetch latest release from GitHub API and wire up download URLs
+      // Fetch latest release from GitHub API and wire up download URLs.
+      // The cards start in `is-loading` state with aria-disabled=true so they
+      // can't be clicked while we're figuring out which file to point at.
+      function markUnavailable(card, message) {
+        card.classList.remove('is-loading')
+        card.classList.add('is-unavailable')
+        card.removeAttribute('aria-disabled')
+        card.removeAttribute('download')
+        card.href = `https://github.com/${REPO}/releases`
+        card.target = '_blank'
+        card.rel = 'noopener'
+        card.querySelector('.download-cta').textContent = message
+      }
+
+      function markReady(card, asset, version) {
+        card.classList.remove('is-loading', 'is-unavailable')
+        card.removeAttribute('aria-disabled')
+        card.href = asset.browser_download_url
+        card.setAttribute('download', asset.name)
+        card.removeAttribute('target')
+        card.removeAttribute('rel')
+        card.querySelector('.download-cta').textContent = version
+          ? `ดาวน์โหลด ${version}`
+          : 'ดาวน์โหลด'
+      }
+
       async function loadDownloads() {
+        let data
         try {
           const res = await fetch(
             `https://api.github.com/repos/${REPO}/releases/latest`,
           )
+          if (res.status === 404) {
+            // Repo exists but no releases published yet
+            document
+              .querySelectorAll('.download-card')
+              .forEach((c) =>
+                markUnavailable(c, 'ยังไม่มี release · ดูใน GitHub'),
+              )
+            return
+          }
           if (!res.ok) throw new Error(`HTTP ${res.status}`)
-          const data = await res.json()
-          const assets = data.assets || []
-          document.querySelectorAll('.download-card').forEach((card) => {
-            const os = card.dataset.os
-            const asset = assets.find((a) => {
-              if (os === 'mac-arm')
-                return /arm64.*\.dmg$/i.test(a.name)
-              if (os === 'mac-intel')
-                return /x64.*\.dmg$/i.test(a.name) ||
-                  (/\.dmg$/i.test(a.name) && !/arm64/i.test(a.name))
-              if (os === 'win') return /\.exe$/i.test(a.name)
-              return false
-            })
-            if (asset) {
-              card.href = asset.browser_download_url
-            } else {
-              card.href = `https://github.com/${REPO}/releases`
-              card.querySelector('.download-cta').textContent = 'ดูใน GitHub'
-            }
-          })
+          data = await res.json()
         } catch (e) {
           console.warn('failed to load releases:', e)
-          document.querySelectorAll('.download-card').forEach((card) => {
-            card.href = `https://github.com/${REPO}/releases`
-            card.querySelector('.download-cta').textContent = 'ดูใน GitHub'
-          })
+          document
+            .querySelectorAll('.download-card')
+            .forEach((c) => markUnavailable(c, 'โหลดไม่สำเร็จ · ดูใน GitHub'))
+          return
         }
+
+        const assets = data.assets || []
+        const version = data.tag_name || data.name || ''
+
+        document.querySelectorAll('.download-card').forEach((card) => {
+          const os = card.dataset.os
+          const asset = assets.find((a) => {
+            if (os === 'mac-arm') return /arm64.*\.dmg$/i.test(a.name)
+            if (os === 'mac-intel')
+              return (
+                /x64.*\.dmg$/i.test(a.name) ||
+                (/\.dmg$/i.test(a.name) && !/arm64/i.test(a.name))
+              )
+            if (os === 'win') return /\.exe$/i.test(a.name)
+            return false
+          })
+          if (asset) {
+            markReady(card, asset, version)
+          } else {
+            markUnavailable(card, 'ไม่มีไฟล์สำหรับ OS นี้')
+          }
+        })
       }
       loadDownloads()
     </script>
