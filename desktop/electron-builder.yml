@@ -1,0 +1,36 @@
+appId: com.xautopost.app
+productName: Xautopost
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**
+  - package.json
+  - "!**/*.map"
+extraResources:
+  # PyInstaller one-dir bundle (built via `npm run build:backend`).
+  # Contains the standalone xautopost-backend executable + bundled deps.
+  - from: ../backend/dist/xautopost-backend
+    to: backend
+    filter:
+      - "**/*"
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  category: public.app-category.productivity
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  identity: null
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  writeUpdateInfo: false
+
+win:
+  target: nsis
+  artifactName: ${productName}-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true

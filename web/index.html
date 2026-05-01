@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Xautopost · ระบบโพสต์ X อัตโนมัติ</title>
+    <meta
+      name="description"
+      content="ระบบจัดการโพสต์ X อัตโนมัติ ใช้ AI สร้างเนื้อหา หลายบัญชีในที่เดียว"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Thai+Looped:wght@400;500;600;700&display=swap"
+    />
+    <style>
+      :root {
+        --bg-from: #ffeef3;
+        --bg-to: #fff8f3;
+        --primary: #f4a6cd;
+        --primary-strong: #e879a8;
+        --primary-soft: #ffe0ec;
+        --peach: #ffd6a5;
+        --lavender: #e0d4f9;
+        --text: #4a3f4b;
+        --muted: #9b8b9e;
+        --border: #fce4ec;
+        --shadow-sm: 0 2px 8px rgba(244, 166, 205, 0.1);
+        --shadow-md: 0 8px 24px rgba(244, 166, 205, 0.16);
+        --shadow-lg: 0 16px 48px rgba(244, 166, 205, 0.22);
+        --font:
+          'Plus Jakarta Sans', 'IBM Plex Sans Thai Looped', -apple-system,
+          system-ui, sans-serif;
+        --font-display:
+          'Quicksand', 'IBM Plex Sans Thai Looped', -apple-system, system-ui,
+          sans-serif;
+        --font-mono: ui-monospace, 'SF Mono', monospace;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+      }
+      body {
+        background:
+          radial-gradient(
+            circle at 0% 0%,
+            rgba(255, 214, 165, 0.45),
+            transparent 40%
+          ),
+          radial-gradient(
+            circle at 100% 100%,
+            rgba(224, 212, 249, 0.45),
+            transparent 40%
+          ),
+          linear-gradient(135deg, var(--bg-from), var(--bg-to));
+        background-attachment: fixed;
+        min-height: 100vh;
+        color: var(--text);
+        font-family: var(--font);
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .container {
+        max-width: 920px;
+        margin: 0 auto;
+        padding: 80px 24px 100px;
+      }
+
+      .hero {
+        text-align: center;
+        margin-bottom: 56px;
+      }
+      .logo {
+        width: 80px;
+        height: 80px;
+        border-radius: 24px;
+        background: linear-gradient(135deg, var(--primary), var(--lavender));
+        box-shadow: var(--shadow-lg);
+        margin: 0 auto 24px;
+        position: relative;
+      }
+      .logo::after {
+        content: '';
+        position: absolute;
+        inset: 24px;
+        background: white;
+        border-radius: 50%;
+        box-shadow: inset 0 0 0 4px var(--primary-soft);
+      }
+      h1 {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 52px;
+        margin: 0 0 12px;
+        letter-spacing: -0.02em;
+      }
+      .tagline {
+        font-size: 17px;
+        color: var(--muted);
+        margin: 0 auto;
+        max-width: 540px;
+      }
+
+      .download-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 16px;
+        max-width: 760px;
+        margin: 0 auto 60px;
+      }
+      .download-card {
+        background: white;
+        border: 1px solid var(--border);
+        border-radius: 22px;
+        padding: 24px;
+        text-decoration: none;
+        color: var(--text);
+        box-shadow: var(--shadow-sm);
+        transition:
+          transform 0.15s,
+          box-shadow 0.15s,
+          border-color 0.15s;
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .download-card:hover {
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-md);
+        border-color: var(--primary);
+      }
+      .download-card.recommended {
+        border-color: var(--primary-strong);
+        background: linear-gradient(180deg, white, var(--primary-soft));
+      }
+      .download-card.recommended::before {
+        content: 'แนะนำสำหรับเครื่องคุณ';
+        position: absolute;
+        top: -10px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: linear-gradient(
+          135deg,
+          var(--primary),
+          var(--primary-strong)
+        );
+        color: white;
+        padding: 4px 14px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 700;
+        white-space: nowrap;
+        box-shadow: var(--shadow-sm);
+      }
+      .download-os {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 20px;
+        margin: 0;
+      }
+      .download-meta {
+        color: var(--muted);
+        font-size: 12px;
+        font-family: var(--font-mono);
+        margin: 0;
+      }
+      .download-cta {
+        margin-top: 12px;
+        display: inline-block;
+        padding: 8px 16px;
+        background: linear-gradient(
+          135deg,
+          var(--primary),
+          var(--primary-strong)
+        );
+        color: white;
+        border-radius: 12px;
+        font-weight: 600;
+        font-size: 13px;
+        align-self: flex-start;
+      }
+
+      .features {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 16px;
+        margin-bottom: 36px;
+      }
+      .feature {
+        background: white;
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        padding: 22px;
+        box-shadow: var(--shadow-sm);
+      }
+      .feature h3 {
+        font-family: var(--font-display);
+        font-weight: 600;
+        font-size: 16px;
+        margin: 0 0 6px;
+      }
+      .feature p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .notice {
+        background: rgba(255, 255, 255, 0.7);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 18px 22px;
+        font-size: 13px;
+        color: var(--muted);
+        max-width: 720px;
+        margin: 0 auto;
+        line-height: 1.8;
+      }
+      .notice strong {
+        color: var(--text);
+      }
+      .notice code {
+        background: var(--primary-soft);
+        padding: 2px 8px;
+        border-radius: 6px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--text);
+      }
+
+      footer {
+        text-align: center;
+        margin-top: 56px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      footer a {
+        color: var(--primary-strong);
+        text-decoration: none;
+        font-weight: 600;
+      }
+      footer a:hover {
+        text-decoration: underline;
+      }
+
+      @media (max-width: 540px) {
+        .container {
+          padding: 56px 20px 80px;
+        }
+        h1 {
+          font-size: 38px;
+        }
+        .download-card.recommended::before {
+          font-size: 10px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="container">
+      <section class="hero">
+        <div class="logo" aria-hidden></div>
+        <h1>Xautopost</h1>
+        <p class="tagline">
+          ระบบจัดการโพสต์ X อัตโนมัติ ใช้ AI สร้างเนื้อหา
+          หลายบัญชีในที่เดียว ติดตั้งบนเครื่องคุณ ข้อมูลเข้ารหัสทุกอย่าง
+        </p>
+      </section>
+
+      <section class="download-grid" id="downloads">
+        <a class="download-card" data-os="mac-arm" href="#">
+          <h2 class="download-os">Mac · Apple Silicon</h2>
+          <p class="download-meta">.dmg · arm64 (M1/M2/M3/M4)</p>
+          <span class="download-cta">ดาวน์โหลด</span>
+        </a>
+        <a class="download-card" data-os="mac-intel" href="#">
+          <h2 class="download-os">Mac · Intel</h2>
+          <p class="download-meta">.dmg · x64</p>
+          <span class="download-cta">ดาวน์โหลด</span>
+        </a>
+        <a class="download-card" data-os="win" href="#">
+          <h2 class="download-os">Windows</h2>
+          <p class="download-meta">.exe · x64</p>
+          <span class="download-cta">ดาวน์โหลด</span>
+        </a>
+      </section>
+
+      <section class="features">
+        <article class="feature">
+          <h3>หลายบัญชี · รวมในที่เดียว</h3>
+          <p>
+            จัดการบัญชี X ได้ไม่จำกัด พร้อม proxy ต่อบัญชี เก็บ session
+            แบบเข้ารหัส
+          </p>
+        </article>
+        <article class="feature">
+          <h3>AI สร้างเนื้อหา</h3>
+          <p>
+            เชื่อม OpenAI หรือ Gemini ตั้ง prompt ให้ AI
+            สร้างทวีตตามสไตล์ที่ต้องการ
+          </p>
+        </article>
+        <article class="feature">
+          <h3>หมุนเวียนอัตโนมัติ</h3>
+          <p>
+            ตั้งช่วงเวลาเปิด/ปิด, daily limit, rotation interval —
+            ระบบจัดเองให้
+          </p>
+        </article>
+        <article class="feature">
+          <h3>ปลอดภัย · เก็บในเครื่อง</h3>
+          <p>
+            Cookies, API keys, proxy creds เข้ารหัส AES-GCM master key
+            อยู่ใน OS Keychain
+          </p>
+        </article>
+      </section>
+
+      <div class="notice">
+        <strong>ความต้องการระบบ:</strong> ต้องมี Google Chrome
+        ติดตั้งในเครื่อง (Playwright ใช้ Chrome เพื่อโพสต์) — Mac 11+ (Big
+        Sur) หรือ Windows 10+
+        <br /><br />
+        <strong>หมายเหตุ:</strong> แอปยังไม่ได้ code sign — Mac อาจขึ้น
+        "App is damaged" ให้ใช้คำสั่ง
+        <code>xattr -cr /Applications/Xautopost.app</code>
+        หลังลากเข้า Applications · Windows อาจขึ้น SmartScreen ให้คลิก
+        "More info" → "Run anyway"
+      </div>
+
+      <footer>
+        <p>
+          เปิดเผยซอร์สโค้ดที่
+          <a id="repo-link" href="#">GitHub</a>
+        </p>
+      </footer>
+    </main>
+
+    <script>
+      // ⚠️ Update this when you push to GitHub
+      const REPO = 'YOUR_GITHUB_USER/Xautopost'
+
+      document.getElementById('repo-link').href = `https://github.com/${REPO}`
+
+      // Auto-detect OS to highlight the recommended download
+      const ua = navigator.userAgent
+      const isMac = /Mac/i.test(ua)
+      const isWin = /Win/i.test(ua)
+      // Best-effort arch detection — most modern Macs are arm64
+      let macArch = 'arm'
+      if (navigator.userAgentData?.getHighEntropyValues) {
+        navigator.userAgentData
+          .getHighEntropyValues(['architecture'])
+          .then((v) => {
+            if (v.architecture === 'x86') {
+              document
+                .querySelector('[data-os="mac-arm"]')
+                ?.classList.remove('recommended')
+              document
+                .querySelector('[data-os="mac-intel"]')
+                ?.classList.add('recommended')
+            }
+          })
+          .catch(() => {})
+      }
+
+      if (isMac) {
+        document
+          .querySelector('[data-os="mac-arm"]')
+          ?.classList.add('recommended')
+      } else if (isWin) {
+        document
+          .querySelector('[data-os="win"]')
+          ?.classList.add('recommended')
+      }
+
+      // Fetch latest release from GitHub API and wire up download URLs
+      async function loadDownloads() {
+        try {
+          const res = await fetch(
+            `https://api.github.com/repos/${REPO}/releases/latest`,
+          )
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          const data = await res.json()
+          const assets = data.assets || []
+          document.querySelectorAll('.download-card').forEach((card) => {
+            const os = card.dataset.os
+            const asset = assets.find((a) => {
+              if (os === 'mac-arm')
+                return /arm64.*\.dmg$/i.test(a.name)
+              if (os === 'mac-intel')
+                return /x64.*\.dmg$/i.test(a.name) ||
+                  (/\.dmg$/i.test(a.name) && !/arm64/i.test(a.name))
+              if (os === 'win') return /\.exe$/i.test(a.name)
+              return false
+            })
+            if (asset) {
+              card.href = asset.browser_download_url
+            } else {
+              card.href = `https://github.com/${REPO}/releases`
+              card.querySelector('.download-cta').textContent = 'ดูใน GitHub'
+            }
+          })
+        } catch (e) {
+          console.warn('failed to load releases:', e)
+          document.querySelectorAll('.download-card').forEach((card) => {
+            card.href = `https://github.com/${REPO}/releases`
+            card.querySelector('.download-cta').textContent = 'ดูใน GitHub'
+          })
+        }
+      }
+      loadDownloads()
+    </script>
+  </body>
+</html>
