@@ -23,6 +23,9 @@ export type XAccountOut = {
   active_hours_end: number
   last_post_at: string | null
   created_at: string
+  // Live: true while the scheduler has Playwright actively driving X.
+  // Populated server-side from in-memory tracker, not the database.
+  is_posting: boolean
 }
 
 export type XAccountUpdate = Partial<{

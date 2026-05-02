@@ -14,7 +14,7 @@ from app.db.database import get_db
 from app.db.models import Operator, Prompt, Proxy, XAccount
 from app.services.playwright_login import login_manager
 from app.services.poster import post_tweet
-from app.services.scheduler import scheduler
+from app.services.scheduler import is_posting, scheduler
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
@@ -36,6 +36,14 @@ class XAccountOut(BaseModel):
     active_hours_end: int
     last_post_at: datetime | None
     created_at: datetime
+    # Live state — populated from in-memory scheduler tracker, not the DB.
+    is_posting: bool = False
+
+
+def _enrich(acc: XAccount) -> XAccountOut:
+    out = XAccountOut.model_validate(acc)
+    out.is_posting = is_posting(acc.id)
+    return out
 
 
 class XAccountUpdate(BaseModel):
@@ -53,14 +61,15 @@ class XAccountUpdate(BaseModel):
 def list_accounts(
     op: Annotated[Operator, Depends(get_current_operator)],
     db: Annotated[Session, Depends(get_db)],
-) -> list[XAccount]:
-    return list(
+) -> list[XAccountOut]:
+    accounts = list(
         db.scalars(
             select(XAccount)
             .where(XAccount.operator_id == op.id)
             .order_by(XAccount.created_at.desc())
         ).all()
     )
+    return [_enrich(a) for a in accounts]
 
 
 @router.patch("/{account_id}", response_model=XAccountOut)
@@ -69,7 +78,7 @@ def update_account(
     payload: XAccountUpdate,
     op: Annotated[Operator, Depends(get_current_operator)],
     db: Annotated[Session, Depends(get_db)],
-) -> XAccount:
+) -> XAccountOut:
     acc = db.get(XAccount, account_id)
     if acc is None or acc.operator_id != op.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
@@ -99,7 +108,7 @@ def update_account(
     db.refresh(acc)
 
     scheduler.refresh_account(acc.id)
-    return acc
+    return _enrich(acc)
 
 
 @router.delete("/{account_id}")

@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { EmptyState } from '../components/EmptyState'
 import { Mascot } from '../components/Mascot'
+import {
+  deriveAccountState,
+  type AccountState,
+} from '../lib/account-state'
 import { formatHour, formatRelative, formatTimeShort, isToday } from '../lib/time'
 import {
   api,
@@ -40,13 +44,17 @@ export function Home({
 
   useEffect(() => {
     refresh()
-    const id = setInterval(refresh, 15_000)
+    // 8s server poll: catches `is_posting=true` while a browser is open
+    // (a single post takes ~30-60s) so the live indicator shows up
+    // promptly when the scheduler kicks off a post.
+    const id = setInterval(refresh, 8_000)
     return () => clearInterval(id)
   }, [])
 
-  // Re-render every 20s to keep "ago" labels fresh
+  // 5s client tick to refresh "ago" labels and per-account countdowns
+  // without paying server round-trips.
   useEffect(() => {
-    const id = setInterval(() => forceTick((n) => n + 1), 20_000)
+    const id = setInterval(() => forceTick((n) => n + 1), 5_000)
     return () => clearInterval(id)
   }, [])
 
@@ -131,8 +139,12 @@ export function Home({
               const lastLog = logs.find(
                 (l) => l.x_account_id === acc.id && l.status === 'success',
               )
+              const state = deriveAccountState(acc, logs)
               return (
-                <article key={acc.id} className="home-account-card">
+                <article
+                  key={acc.id}
+                  className={`home-account-card${state.kind === 'posting' ? ' is-posting' : ''}`}
+                >
                   <div className="home-account-head">
                     <div
                       className="row-avatar"
@@ -141,7 +153,7 @@ export function Home({
                       {acc.handle.replace('@', '').slice(0, 1).toUpperCase()}
                     </div>
                     <span className="home-account-handle">{acc.handle}</span>
-                    <span className="pill live">โพสต์อยู่</span>
+                    <StatePill state={state} />
                   </div>
                   <div className="row-meta">
                     <span className="muted-note" style={{ margin: 0 }}>
@@ -237,5 +249,28 @@ export function Home({
         )}
       </section>
     </>
+  )
+}
+
+function StatePill({ state }: { state: AccountState }) {
+  const icon =
+    state.kind === 'posting'
+      ? '📮'
+      : state.kind === 'ready'
+        ? '🟢'
+        : state.kind === 'waiting_interval'
+          ? '⏱'
+          : state.kind === 'waiting_window'
+            ? '🌙'
+            : state.kind === 'limit_reached'
+              ? '🛑'
+              : state.kind === 'no_style'
+                ? '⚠️'
+                : '·'
+  return (
+    <span className={`state-pill tone-${state.tone}`}>
+      <span aria-hidden>{icon}</span>
+      {state.label}
+    </span>
   )
 }

@@ -1,6 +1,6 @@
 {
   "name": "xautopost-desktop",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Automated posting system for X",
   "author": "Yossaphan Kaenwong",
   "private": true,

@@ -273,6 +273,56 @@ body {
   50% { opacity: 0.5; transform: scale(0.7); }
 }
 
+/* ─── State pill (per-account live status) ───────────────────
+   Different from .pill: uses a leading emoji as the visual
+   indicator instead of a colored dot, so it can carry richer
+   information ("📮 กำลังโพสต์อยู่ตอนนี้", "⏱ รออีก 12 นาที").
+─────────────────────────────────────────────────────────────── */
+
+.state-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font);
+  white-space: nowrap;
+  line-height: 1.4;
+}
+.state-pill.tone-live {
+  background: linear-gradient(135deg, #65d49a, #2e9b6c);
+  color: white;
+  animation: pulse-live 1.4s ease-in-out infinite;
+}
+@keyframes pulse-live {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(46, 155, 108, 0.45); }
+  50% { box-shadow: 0 0 0 8px rgba(46, 155, 108, 0); }
+}
+.state-pill.tone-ok {
+  background: var(--success-bg);
+  color: var(--success-fg);
+}
+.state-pill.tone-warn {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+}
+.state-pill.tone-wait {
+  background: var(--peach-soft);
+  color: var(--text-on-peach);
+}
+.state-pill.tone-idle {
+  background: var(--idle-bg);
+  color: var(--idle-fg);
+}
+
+.home-account-card.is-posting {
+  border-color: #2e9b6c;
+  box-shadow: 0 0 0 2px rgba(46, 155, 108, 0.15), var(--shadow-sm);
+  background: linear-gradient(180deg, var(--surface), var(--mint-soft));
+}
+
 /* ─── Loading dots ─────────────────────────────────────────── */
 
 .dots {

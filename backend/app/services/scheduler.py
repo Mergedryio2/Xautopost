@@ -22,6 +22,18 @@ log = logging.getLogger(__name__)
 # Serializes posts so multiple operators don't open concurrent Chromium.
 _post_lock = asyncio.Lock()
 
+# Account IDs currently mid-post. The UI polls this (via the is_posting
+# field on XAccountOut) to show a live "📮 กำลังโพสต์อยู่" indicator.
+# In-memory single-process state — resets on sidecar restart, which is
+# correct because in-flight posts also abort on restart.
+_currently_posting: set[int] = set()
+
+
+def is_posting(account_id: int) -> bool:
+    """True while the scheduler has Playwright actively driving X for this
+    account. Used by the UI to surface the posting state in real time."""
+    return account_id in _currently_posting
+
 
 class RotationScheduler:
     """Per-operator rotation: every N seconds, post to the enabled account that
@@ -268,10 +280,16 @@ class RotationScheduler:
         # watch posts happen in real time and intervene if X surfaces a
         # captcha / re-auth dialog. Same flow as the manual "ทดลองโพสต์"
         # button — single code path, fewer surprises.
-        async with _post_lock:
-            await post_tweet(
-                account_id=account_id, content=content, headless=False
-            )
+        # _currently_posting marks this account as actively posting so the
+        # UI can show a live indicator until the post completes.
+        _currently_posting.add(account_id)
+        try:
+            async with _post_lock:
+                await post_tweet(
+                    account_id=account_id, content=content, headless=False
+                )
+        finally:
+            _currently_posting.discard(account_id)
 
 
 def _in_active_window(now: datetime, start: int, end: int) -> bool:
