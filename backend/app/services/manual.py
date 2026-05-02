@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 import re
+from collections import deque
 
 # Posts in a manual prompt are separated by a line that contains only "---"
 # (3+ dashes), surrounded by optional whitespace. Empty parts are dropped.
@@ -32,13 +33,42 @@ EMOJI_POOL: tuple[str, ...] = (
     "🍓", "🍑", "🍒",
 )
 
+# Per-account recency window — refuse to reuse the last N emojis for the same
+# account. Single-process in-memory cache; resets on sidecar restart, which is
+# fine because X's duplicate detection window is ~24h and a restart that
+# infrequent doesn't compound the risk meaningfully.
+_RECENT_HISTORY = 12
+_RECENT_EMOJIS: dict[int, deque[str]] = {}
 
-def decorate(text: str) -> str:
+
+def decorate(text: str, account_id: int | None = None) -> str:
     """Append a random decorative emoji so the post isn't an exact duplicate
-    of any previous identical text. Adds a leading space so it sits clean
-    after the message regardless of the user's punctuation."""
+    of a previous identical text. When account_id is given, the emoji is
+    drawn from the pool minus the last 12 emojis used on that account, so
+    repeats are spread across at least 13 picks before recycling — well
+    outside X's duplicate-content detection window for typical post rates."""
     if not text:
         return text
-    emoji = random.choice(EMOJI_POOL)
-    # Trailing-whitespace-aware: avoid double-spacing if user already left a space.
+
+    excluded: set[str] = set()
+    if account_id is not None:
+        recent = _RECENT_EMOJIS.get(account_id)
+        if recent:
+            excluded = set(recent)
+
+    pool = [e for e in EMOJI_POOL if e not in excluded]
+    if not pool:
+        # Defensive: if the exclusion set somehow covered the whole pool
+        # (won't happen with 38 emojis vs 12 history slots, but cheap to
+        # guard). Fall back to the full pool.
+        pool = list(EMOJI_POOL)
+
+    emoji = random.choice(pool)
+
+    if account_id is not None:
+        ring = _RECENT_EMOJIS.setdefault(
+            account_id, deque(maxlen=_RECENT_HISTORY)
+        )
+        ring.append(emoji)
+
     return f"{text.rstrip()} {emoji}"

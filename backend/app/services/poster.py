@@ -136,14 +136,25 @@ async def _do_post(
                         ),
                     )
 
-                await editor.fill(content)
-                await asyncio.sleep(0.8)  # tiny human-ish pause
+                # X's tweet composer is a contenteditable Draft.js / Lexical
+                # editor — `editor.fill()` mutates the DOM but doesn't fire the
+                # synthetic input events React listens to, so the Post button
+                # often stays `aria-disabled` even though the text is visible.
+                # Click to focus, then `press_sequentially` types char-by-char
+                # which fires real keydown/keyup/input events that React picks
+                # up correctly.
+                await editor.click()
+                await asyncio.sleep(0.25)
+                await editor.press_sequentially(content, delay=12)
+                await asyncio.sleep(1.2)  # let React debounce + state propagate
 
-                # Wait for the post button to be enabled (textarea filled)
+                # Wait for the post button to be enabled (textarea filled).
+                # Bumped to 20s — on slower runners or under network jitter X
+                # sometimes takes longer to swap the button to enabled.
                 button = page.locator(
                     '[data-testid="tweetButton"]:not([aria-disabled="true"])'
                 ).first
-                await button.wait_for(timeout=10_000)
+                await button.wait_for(timeout=20_000)
                 await button.click()
 
                 # Poll for outcome up to ~12s. Success signals: editor gone

@@ -142,14 +142,34 @@ class RotationScheduler:
             today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
             chosen: XAccount | None = None
-            skipped: list[tuple[int, str]] = []
+            # Loud skips = configuration problems the user needs to know about
+            # (no prompt, manual style empty, etc). Operational throttling
+            # (active window, per-account interval, daily limit) is silent —
+            # logging every tick of "ยังไม่ถึงเวลา" would drown the actual log.
+            loud_skipped: list[tuple[int, str]] = []
 
             for acc in accounts:
+                # Operational gate 1: active hours window — silent skip
                 if not _in_active_window(
                     now, acc.active_hours_start, acc.active_hours_end
                 ):
-                    skipped.append((acc.id, "อยู่นอกช่วงเวลาที่ตั้งไว้"))
                     continue
+
+                # Operational gate 2: per-account min/max interval — silent skip.
+                # Pick a random target in [min, max] minutes; the same account
+                # cannot post again until that much time has passed since
+                # last_post_at. This is the human-like cadence guarantee.
+                if acc.last_post_at is not None:
+                    target_minutes = random.uniform(
+                        acc.min_interval_minutes, acc.max_interval_minutes
+                    )
+                    elapsed_minutes = (
+                        now - acc.last_post_at
+                    ).total_seconds() / 60.0
+                    if elapsed_minutes < target_minutes:
+                        continue
+
+                # Operational gate 3: daily limit — silent skip
                 count = (
                     db.scalar(
                         select(func.count())
@@ -163,23 +183,23 @@ class RotationScheduler:
                     or 0
                 )
                 if count >= acc.daily_limit:
-                    skipped.append(
-                        (
-                            acc.id,
-                            f"ครบ daily limit ({count}/{acc.daily_limit})",
-                        )
+                    continue
+
+                # Configuration gate: missing prompt — loud skip
+                if not acc.default_prompt_id:
+                    loud_skipped.append(
+                        (acc.id, "ยังไม่ตั้งสไตล์การเขียน")
                     )
                     continue
-                if not acc.default_prompt_id:
-                    skipped.append((acc.id, "ยังไม่ตั้ง default prompt"))
-                    continue
+
                 chosen = acc
                 break
 
             if chosen is None:
-                # All eligible candidates were skipped — log the front of queue
-                if skipped:
-                    _log_skip(skipped[0][0], skipped[0][1])
+                # Only surface configuration issues; operational throttling is
+                # part of normal operation and shouldn't pollute the log.
+                if loud_skipped:
+                    _log_skip(loud_skipped[0][0], loud_skipped[0][1])
                 return
 
             prompt = db.get(Prompt, chosen.default_prompt_id)
@@ -224,7 +244,7 @@ class RotationScheduler:
                 return
             content = random.choice(candidates)
             if vary_decoration:
-                content = decorate(content)
+                content = decorate(content, account_id=account_id)
         else:
             try:
                 content = await generate_content(

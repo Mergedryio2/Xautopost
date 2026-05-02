@@ -8,6 +8,9 @@
       name="description"
       content="ระบบจัดการโพสต์ X อัตโนมัติ ใช้ AI สร้างเนื้อหา หลายบัญชีในที่เดียว"
     />
+    <link rel="icon" type="image/svg+xml" href="icon.svg" />
+    <link rel="apple-touch-icon" href="icon.svg" />
+    <meta name="theme-color" content="#f4a6cd" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -79,21 +82,11 @@
         margin-bottom: 56px;
       }
       .logo {
-        width: 80px;
-        height: 80px;
-        border-radius: 24px;
-        background: linear-gradient(135deg, var(--primary), var(--lavender));
-        box-shadow: var(--shadow-lg);
+        width: 88px;
+        height: 88px;
         margin: 0 auto 24px;
-        position: relative;
-      }
-      .logo::after {
-        content: '';
-        position: absolute;
-        inset: 24px;
-        background: white;
-        border-radius: 50%;
-        box-shadow: inset 0 0 0 4px var(--primary-soft);
+        display: block;
+        filter: drop-shadow(0 12px 32px rgba(232, 121, 168, 0.35));
       }
       h1 {
         font-family: var(--font-display);
@@ -295,7 +288,27 @@
   <body>
     <main class="container">
       <section class="hero">
-        <div class="logo" aria-hidden></div>
+        <svg class="logo" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Xautopost">
+          <defs>
+            <linearGradient id="hero-bg" x1="6" y1="6" x2="58" y2="58" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#f4a6cd" />
+              <stop offset="50%" stop-color="#e879a8" />
+              <stop offset="100%" stop-color="#c39bdb" />
+            </linearGradient>
+            <linearGradient id="hero-x" x1="20" y1="20" x2="44" y2="44" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#ffffff" />
+              <stop offset="100%" stop-color="#fff0f6" />
+            </linearGradient>
+          </defs>
+          <rect width="64" height="64" rx="16" fill="url(#hero-bg)" />
+          <rect width="64" height="32" rx="16" fill="#ffffff" opacity="0.12" />
+          <g stroke="url(#hero-x)" stroke-width="6.5" stroke-linecap="round" fill="none">
+            <line x1="22" y1="22" x2="42" y2="42" />
+            <line x1="42" y1="22" x2="22" y2="42" />
+          </g>
+          <path d="M48 12 L48.9 9.4 L49.8 12 L52.4 12.9 L49.8 13.8 L48.9 16.4 L48 13.8 L45.4 12.9 Z" fill="#ffffff" />
+          <circle cx="14" cy="50" r="1.6" fill="#ffffff" opacity="0.65" />
+        </svg>
         <h1>Xautopost</h1>
         <p class="tagline">
           ระบบจัดการโพสต์ X อัตโนมัติ ใช้ AI สร้างเนื้อหา

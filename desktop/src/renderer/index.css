@@ -92,24 +92,6 @@ body {
   margin-bottom: 24px;
 }
 
-.app-logo {
-  width: 44px;
-  height: 44px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, var(--primary), var(--lavender));
-  box-shadow: var(--shadow-md);
-  position: relative;
-  flex-shrink: 0;
-}
-.app-logo::after {
-  content: '';
-  position: absolute;
-  inset: 12px;
-  background: white;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 3px var(--primary-soft);
-}
-
 .app-title {
   font-family: var(--font-display);
   font-weight: 700;
