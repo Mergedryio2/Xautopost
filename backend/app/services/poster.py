@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import platform
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,6 +15,14 @@ from app.db.models import PostLog, Proxy, XAccount
 from app.db.utils import utcnow
 
 log = logging.getLogger(__name__)
+
+# X's built-in keyboard shortcut for sending the composed tweet. We dispatch
+# via this rather than clicking the Post button because X overlays a
+# pointer-event-blocking <div data-testid="mask"> during the composer's open
+# animation, which causes any locator.click() to time out (the click waits
+# for pointer events to reach the target and the mask intercepts them).
+# Keyboard input goes through a different pipeline — no overlay check.
+_POST_HOTKEY = "Meta+Enter" if platform.system() == "Darwin" else "Control+Enter"
 
 
 @dataclass
@@ -136,26 +145,33 @@ async def _do_post(
                         ),
                     )
 
-                # X's tweet composer is a contenteditable Draft.js / Lexical
-                # editor — `editor.fill()` mutates the DOM but doesn't fire the
-                # synthetic input events React listens to, so the Post button
-                # often stays `aria-disabled` even though the text is visible.
-                # Click to focus, then `press_sequentially` types char-by-char
-                # which fires real keydown/keyup/input events that React picks
-                # up correctly.
-                await editor.click()
-                await asyncio.sleep(0.25)
-                await editor.press_sequentially(content, delay=12)
+                # X's tweet composer has two overlapping booby-traps:
+                # 1. `editor.fill()` mutates the DOM but doesn't fire the
+                #    synthetic input events React listens to → Post button
+                #    stays aria-disabled forever.
+                # 2. `editor.click()` times out because X overlays a
+                #    transient `<div data-testid="mask">` from `<div id="layers">`
+                #    during the modal-open animation; pointer events get
+                #    intercepted by the mask, click retries indefinitely.
+                # `editor.focus()` goes through the DOM directly (no
+                # pointer-events check), and `page.keyboard.type` sends real
+                # keydown/keyup/input events that React's contenteditable
+                # picks up — bypassing both traps.
+                await editor.focus()
+                await asyncio.sleep(0.3)
+                await page.keyboard.type(content, delay=12)
                 await asyncio.sleep(1.2)  # let React debounce + state propagate
 
-                # Wait for the post button to be enabled (textarea filled).
-                # Bumped to 20s — on slower runners or under network jitter X
-                # sometimes takes longer to swap the button to enabled.
+                # Wait for the post button to flip aria-disabled=false. We
+                # don't actually click it — just use it as a "content
+                # registered" gate, then dispatch via Cmd/Ctrl+Enter to dodge
+                # the same mask overlay that blocks editor.click(). 20s is
+                # generous; on a healthy network it flips in <1s.
                 button = page.locator(
                     '[data-testid="tweetButton"]:not([aria-disabled="true"])'
                 ).first
                 await button.wait_for(timeout=20_000)
-                await button.click()
+                await page.keyboard.press(_POST_HOTKEY)
 
                 # Poll for outcome up to ~12s. Success signals: editor gone
                 # or editor cleared. Failure signal: explicit error toast/alert.
