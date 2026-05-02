@@ -263,10 +263,14 @@ class RotationScheduler:
                     )
                     return
 
-        # Post (serialized across operators)
+        # Post (serialized across operators).
+        # We launch the browser visibly (headless=False) so the operator can
+        # watch posts happen in real time and intervene if X surfaces a
+        # captcha / re-auth dialog. Same flow as the manual "ทดลองโพสต์"
+        # button — single code path, fewer surprises.
         async with _post_lock:
             await post_tweet(
-                account_id=account_id, content=content, headless=True
+                account_id=account_id, content=content, headless=False
             )
 
 
