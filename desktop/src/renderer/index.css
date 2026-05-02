@@ -1467,6 +1467,31 @@ body {
   overflow: hidden;
   animation: pop 0.2s var(--ease);
 }
+/* Wide variant for dense content (all-accounts grid, future tables).
+   Near-fullscreen on a 13" laptop, contained on a desktop monitor. */
+.modal-card.is-lg {
+  max-width: min(1200px, 92vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+.modal-card.is-lg .modal-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 22px 26px 24px;
+}
+.modal-card.is-lg .modal-header {
+  padding: 20px 26px;
+}
+.modal-card.is-lg .modal-header h3 {
+  font-size: 18px;
+}
+.modal-card.is-lg .home-account-grid {
+  /* Smaller card minimum so a 1200px modal hits 4-5 columns instead of
+     the home page's 3-4. Larger gap to breathe. */
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
 
 .modal-header {
   display: flex;

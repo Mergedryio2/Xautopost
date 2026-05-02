@@ -192,17 +192,15 @@ export function Home({
       <Modal
         open={showAllAccounts}
         onClose={() => setShowAllAccounts(false)}
+        size="lg"
         title={`บัญชีที่กำลังหมุนเวียนทั้งหมด (${activeSorted.length})`}
       >
-        <div
-          className="home-account-grid"
-          style={{ gridTemplateColumns: '1fr', maxHeight: '60vh', overflowY: 'auto' }}
-        >
+        <div className="home-account-grid">
           {activeSorted.map(({ acc, state }) => (
             <AccountCard key={acc.id} acc={acc} state={state} logs={logs} />
           ))}
         </div>
-        <div className="form-actions" style={{ marginTop: 12 }}>
+        <div className="form-actions" style={{ marginTop: 18 }}>
           <button
             type="button"
             className="btn-primary"

@@ -9,12 +9,16 @@ export function Modal({
   title,
   children,
   closeOnBackdrop = true,
+  size = 'sm',
 }: {
   open: boolean
   onClose: () => void
   title: string
   children: ReactNode
   closeOnBackdrop?: boolean
+  // 'sm' (default) = 460px form modal; 'lg' = near-fullscreen (92vw / 88vh)
+  // for showing dense grids like the all-accounts view.
+  size?: 'sm' | 'lg'
 }) {
   const titleId = useId()
   const dialogRef = useRef<HTMLDivElement>(null)
@@ -82,7 +86,7 @@ export function Modal({
     >
       <div
         ref={dialogRef}
-        className="modal-card"
+        className={`modal-card${size === 'lg' ? ' is-lg' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
