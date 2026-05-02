@@ -145,6 +145,16 @@ async def _do_post(
                         ),
                     )
 
+                # editor.wait_for fires the moment the element is in the DOM,
+                # which is BEFORE X's composer slide-in animation completes.
+                # If we focus + type immediately, the operator sees text
+                # appearing while the modal is still mid-animation — looks
+                # janky and sometimes the focus lands wrong because the
+                # animated transform isn't settled yet. Pause for a beat so
+                # the visible sequence reads cleanly: modal slides in →
+                # cursor focuses → text types out.
+                await asyncio.sleep(1.0)
+
                 # X's tweet composer has two overlapping booby-traps:
                 # 1. `editor.fill()` mutates the DOM but doesn't fire the
                 #    synthetic input events React listens to → Post button

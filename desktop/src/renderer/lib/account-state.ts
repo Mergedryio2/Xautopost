@@ -6,14 +6,26 @@ function parseBkk(iso: string): Date {
   return new Date(hasOffset ? iso : `${iso}+07:00`)
 }
 
-export type AccountState =
-  | { kind: 'disabled'; label: string; tone: 'idle' }
-  | { kind: 'no_style'; label: string; tone: 'warn' }
-  | { kind: 'posting'; label: string; tone: 'live' }
-  | { kind: 'limit_reached'; label: string; tone: 'idle' }
-  | { kind: 'waiting_window'; label: string; tone: 'idle' }
-  | { kind: 'waiting_interval'; label: string; tone: 'wait' }
-  | { kind: 'ready'; label: string; tone: 'ok' }
+export type AccountStateKind =
+  | 'disabled'
+  | 'no_style'
+  | 'posting'
+  | 'limit_reached'
+  | 'waiting_window'
+  | 'waiting_interval'
+  | 'ready'
+
+export type AccountStateTone = 'idle' | 'warn' | 'live' | 'wait' | 'ok'
+
+export type AccountState = {
+  kind: AccountStateKind
+  label: string
+  tone: AccountStateTone
+  // Lower = more urgent / closer to posting; used to sort the Home grid so
+  // the most actionable accounts appear in the first 4 slots and quieter
+  // states (off-hours / limit-reached / no-style) sink to the modal.
+  priority: number
+}
 
 function inActiveWindow(now: Date, start: number, end: number): boolean {
   if (start === end) return true // 24h
@@ -73,13 +85,20 @@ export function deriveAccountState(
   now: Date = new Date(),
 ): AccountState {
   if (!acc.posting_enabled) {
-    return { kind: 'disabled', label: 'ปิดอยู่', tone: 'idle' }
+    return {
+      kind: 'disabled',
+      label: 'ปิดอยู่',
+      tone: 'idle',
+      priority: 9_000,
+    }
   }
   if (acc.default_prompt_id === null) {
     return {
       kind: 'no_style',
       label: 'ยังไม่ได้ตั้งสไตล์การเขียน',
       tone: 'warn',
+      // Configuration issue — surface high so the user fixes it
+      priority: 50,
     }
   }
   if (acc.is_posting) {
@@ -87,6 +106,7 @@ export function deriveAccountState(
       kind: 'posting',
       label: 'กำลังโพสต์อยู่ตอนนี้',
       tone: 'live',
+      priority: 0,
     }
   }
 
@@ -96,6 +116,7 @@ export function deriveAccountState(
       kind: 'limit_reached',
       label: `ครบโควต้าวันนี้แล้ว (${todayCount}/${acc.daily_limit}) · เริ่มใหม่พรุ่งนี้`,
       tone: 'idle',
+      priority: 5_000,
     }
   }
 
@@ -105,6 +126,7 @@ export function deriveAccountState(
       kind: 'waiting_window',
       label: `พักนอกช่วงเวลา · เริ่มอีกครั้ง ${formatHHMM(next)}`,
       tone: 'idle',
+      priority: 4_000,
     }
   }
 
@@ -121,6 +143,9 @@ export function deriveAccountState(
             ? `รออีก ${formatRelMinutes(minRemaining)} – ${formatRelMinutes(maxRemaining)}`
             : `รออีก ~${formatRelMinutes(minRemaining)}`,
         tone: 'wait',
+        // Closer to ready = lower priority value = appears earlier.
+        // 200 base + remaining-minutes keeps the spread bounded.
+        priority: 200 + minRemaining,
       }
     }
   }
@@ -129,5 +154,6 @@ export function deriveAccountState(
     kind: 'ready',
     label: `พร้อมโพสต์ทุกเมื่อ · ${todayCount}/${acc.daily_limit} วันนี้`,
     tone: 'ok',
+    priority: 100,
   }
 }

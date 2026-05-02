@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { EmptyState } from '../components/EmptyState'
 import { Mascot } from '../components/Mascot'
+import { Modal } from '../components/Modal'
 import {
   deriveAccountState,
   type AccountState,
@@ -12,6 +13,8 @@ import {
   type PostLogOut,
   type XAccountOut,
 } from '../lib/api'
+
+const INLINE_LIMIT = 4
 
 export function Home({
   operator,
@@ -58,10 +61,19 @@ export function Home({
     return () => clearInterval(id)
   }, [])
 
-  const active = useMemo(
-    () => accounts.filter((a) => a.posting_enabled),
-    [accounts],
-  )
+  const [showAllAccounts, setShowAllAccounts] = useState(false)
+
+  // Sort active accounts by state priority so the user sees the most
+  // actionable ones first: posting now → about to post → ready → waiting →
+  // off-hours → limit-reached. Quieter states sink into the "ดูทั้งหมด"
+  // modal when there are more than INLINE_LIMIT accounts.
+  const activeSorted = useMemo(() => {
+    const enabled = accounts.filter((a) => a.posting_enabled)
+    return enabled
+      .map((acc) => ({ acc, state: deriveAccountState(acc, logs) }))
+      .sort((a, b) => a.state.priority - b.state.priority)
+  }, [accounts, logs])
+
   const todayLogs = useMemo(
     () => logs.filter((l) => isToday(l.timestamp)),
     [logs],
@@ -90,7 +102,7 @@ export function Home({
     <>
       <section className="home-hero">
         <div className="home-hero-mascot">
-          <Mascot mood={active.length > 0 ? 'working' : 'sleep'} size={72} />
+          <Mascot mood={activeSorted.length > 0 ? 'working' : 'sleep'} size={72} />
         </div>
         <div className="home-hero-info">
           {accounts.length === 0 ? (
@@ -100,10 +112,10 @@ export function Home({
                 เพิ่มบัญชี X แรกของคุณ แล้วให้ AI ช่วยโพสต์ตามสไตล์ที่คุณตั้งไว้ค่ะ
               </p>
             </>
-          ) : active.length > 0 ? (
+          ) : activeSorted.length > 0 ? (
             <>
               <h2 className="home-hero-title">
-                กำลังดูแล {active.length} จาก {accounts.length} บัญชีให้คุณอยู่
+                กำลังดูแล {activeSorted.length} จาก {accounts.length} บัญชีให้คุณอยู่
               </h2>
               <p className="home-hero-sub">
                 ระบบจะสุ่มเวลาโพสต์ให้แต่ละบัญชี เคารพช่วงเวลาและจำนวนต่อวันที่ตั้งไว้
@@ -131,57 +143,66 @@ export function Home({
 
       {error && <div className="form-error">{error}</div>}
 
-      {active.length > 0 && (
+      {activeSorted.length > 0 && (
         <section className="card">
-          <h3 className="card-title">บัญชีที่กำลังหมุนเวียน</h3>
-          <div className="home-account-grid">
-            {active.map((acc) => {
-              const lastLog = logs.find(
-                (l) => l.x_account_id === acc.id && l.status === 'success',
-              )
-              const state = deriveAccountState(acc, logs)
-              return (
-                <article
-                  key={acc.id}
-                  className={`home-account-card${state.kind === 'posting' ? ' is-posting' : ''}`}
-                >
-                  <div className="home-account-head">
-                    <div
-                      className="row-avatar"
-                      style={{ background: 'var(--lavender)' }}
-                    >
-                      {acc.handle.replace('@', '').slice(0, 1).toUpperCase()}
-                    </div>
-                    <span className="home-account-handle">{acc.handle}</span>
-                    <StatePill state={state} />
-                  </div>
-                  <div className="row-meta">
-                    <span className="muted-note" style={{ margin: 0 }}>
-                      ⏱ ทุก {acc.min_interval_minutes}–{acc.max_interval_minutes} นาที
-                    </span>
-                    <span className="muted-note" style={{ margin: 0 }}>
-                      ☀️ {formatHour(acc.active_hours_start)}–
-                      {formatHour(acc.active_hours_end)}
-                    </span>
-                  </div>
-                  {lastLog ? (
-                    <div className="home-account-recent">
-                      <strong style={{ color: 'var(--text)' }}>
-                        {formatRelative(lastLog.timestamp)}:
-                      </strong>{' '}
-                      {lastLog.content || '(ไม่มีเนื้อหา)'}
-                    </div>
-                  ) : (
-                    <div className="home-account-recent">
-                      <em>ยังไม่เคยโพสต์ตั้งแต่เปิดใช้งาน</em>
-                    </div>
-                  )}
-                </article>
-              )
-            })}
+          <div className="section-head" style={{ marginBottom: 12 }}>
+            <h3 className="card-title" style={{ margin: 0 }}>
+              บัญชีที่กำลังหมุนเวียน
+            </h3>
+            {activeSorted.length > INLINE_LIMIT && (
+              <button
+                type="button"
+                className="btn-ghost btn-sm"
+                onClick={() => setShowAllAccounts(true)}
+              >
+                ดูทั้งหมด ({activeSorted.length})
+              </button>
+            )}
           </div>
+          <div className="home-account-grid">
+            {activeSorted.slice(0, INLINE_LIMIT).map(({ acc, state }) => (
+              <AccountCard
+                key={acc.id}
+                acc={acc}
+                state={state}
+                logs={logs}
+              />
+            ))}
+          </div>
+          {activeSorted.length > INLINE_LIMIT && (
+            <p
+              className="muted-note"
+              style={{ margin: '12px 0 0', textAlign: 'center' }}
+            >
+              อีก {activeSorted.length - INLINE_LIMIT} บัญชีอยู่ในรายการเต็ม
+            </p>
+          )}
         </section>
       )}
+
+      <Modal
+        open={showAllAccounts}
+        onClose={() => setShowAllAccounts(false)}
+        title={`บัญชีที่กำลังหมุนเวียนทั้งหมด (${activeSorted.length})`}
+      >
+        <div
+          className="home-account-grid"
+          style={{ gridTemplateColumns: '1fr', maxHeight: '60vh', overflowY: 'auto' }}
+        >
+          {activeSorted.map(({ acc, state }) => (
+            <AccountCard key={acc.id} acc={acc} state={state} logs={logs} />
+          ))}
+        </div>
+        <div className="form-actions" style={{ marginTop: 12 }}>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => setShowAllAccounts(false)}
+          >
+            ปิด
+          </button>
+        </div>
+      </Modal>
 
       <section className="card">
         <div
@@ -208,7 +229,7 @@ export function Home({
             description={
               accounts.length === 0
                 ? 'เริ่มจากเพิ่มบัญชี X แรกของคุณ'
-                : active.length === 0
+                : activeSorted.length === 0
                   ? 'เปิดบัญชีในแท็บ "บัญชี" แล้วระบบจะเริ่มทำงานให้'
                   : 'รอสักครู่ ระบบกำลังเตรียมรอบโพสต์แรก'
             }
@@ -249,6 +270,57 @@ export function Home({
         )}
       </section>
     </>
+  )
+}
+
+function AccountCard({
+  acc,
+  state,
+  logs,
+}: {
+  acc: XAccountOut
+  state: AccountState
+  logs: PostLogOut[]
+}) {
+  const lastLog = logs.find(
+    (l) => l.x_account_id === acc.id && l.status === 'success',
+  )
+  return (
+    <article
+      className={`home-account-card${state.kind === 'posting' ? ' is-posting' : ''}`}
+    >
+      <div className="home-account-head">
+        <div
+          className="row-avatar"
+          style={{ background: 'var(--lavender)' }}
+        >
+          {acc.handle.replace('@', '').slice(0, 1).toUpperCase()}
+        </div>
+        <span className="home-account-handle">{acc.handle}</span>
+        <StatePill state={state} />
+      </div>
+      <div className="row-meta">
+        <span className="muted-note" style={{ margin: 0 }}>
+          ⏱ ทุก {acc.min_interval_minutes}–{acc.max_interval_minutes} นาที
+        </span>
+        <span className="muted-note" style={{ margin: 0 }}>
+          ☀️ {formatHour(acc.active_hours_start)}–
+          {formatHour(acc.active_hours_end)}
+        </span>
+      </div>
+      {lastLog ? (
+        <div className="home-account-recent">
+          <strong style={{ color: 'var(--text)' }}>
+            {formatRelative(lastLog.timestamp)}:
+          </strong>{' '}
+          {lastLog.content || '(ไม่มีเนื้อหา)'}
+        </div>
+      ) : (
+        <div className="home-account-recent">
+          <em>ยังไม่เคยโพสต์ตั้งแต่เปิดใช้งาน</em>
+        </div>
+      )}
+    </article>
   )
 }
 
