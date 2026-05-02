@@ -1,0 +1,1233 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <title>คู่มือการใช้งาน Xautopost</title>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&family=IBM+Plex+Sans+Thai+Looped:wght@400;500;600;700&display=swap"
+    />
+    <style>
+      :root {
+        --primary: #f4a6cd;
+        --primary-strong: #e879a8;
+        --primary-soft: #ffe0ec;
+        --peach-soft: #fff0db;
+        --peach-fg: #7d4d1e;
+        --mint: #b8e6d9;
+        --mint-soft: #e3f5ee;
+        --mint-fg: #1f5046;
+        --lavender: #e0d4f9;
+        --lavender-soft: #f0eafa;
+        --lavender-fg: #5b3a8a;
+        --warn-bg: #fff1d6;
+        --warn-fg: #b07823;
+        --error-bg: #ffe0e5;
+        --error-fg: #c0395a;
+        --text: #4a3f4b;
+        --muted: #8a7a8d;
+        --border: #f5d8e3;
+        --bg: #fffaf6;
+        --font: 'IBM Plex Sans Thai Looped', 'Plus Jakarta Sans',
+          -apple-system, system-ui, sans-serif;
+        --font-display: 'Quicksand', 'IBM Plex Sans Thai Looped', sans-serif;
+      }
+
+      @page {
+        size: A4;
+        margin: 18mm 16mm 20mm;
+        @bottom-right {
+          content: counter(page) ' / ' counter(pages);
+          font-family: var(--font);
+          font-size: 10pt;
+          color: #aaa;
+        }
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: white;
+        color: var(--text);
+        font-family: var(--font);
+        font-size: 11.5pt;
+        line-height: 1.7;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      h1,
+      h2,
+      h3,
+      h4 {
+        font-family: var(--font-display);
+        color: var(--text);
+        margin: 0;
+        line-height: 1.3;
+      }
+
+      h1 {
+        font-size: 28pt;
+        font-weight: 700;
+        margin: 0 0 8pt;
+        letter-spacing: -0.01em;
+      }
+      h2 {
+        font-size: 20pt;
+        font-weight: 700;
+        margin: 22pt 0 10pt;
+        color: var(--primary-strong);
+        page-break-after: avoid;
+      }
+      h3 {
+        font-size: 14pt;
+        font-weight: 700;
+        margin: 18pt 0 6pt;
+        page-break-after: avoid;
+      }
+      h4 {
+        font-size: 12pt;
+        font-weight: 600;
+        margin: 12pt 0 4pt;
+      }
+
+      p {
+        margin: 0 0 8pt;
+      }
+
+      ol,
+      ul {
+        margin: 0 0 12pt;
+        padding-left: 22pt;
+      }
+      ol li,
+      ul li {
+        margin: 0 0 6pt;
+      }
+      ol li::marker {
+        color: var(--primary-strong);
+        font-weight: 700;
+      }
+      ul li::marker {
+        color: var(--primary);
+      }
+
+      strong {
+        color: var(--primary-strong);
+        font-weight: 700;
+      }
+
+      code {
+        background: var(--primary-soft);
+        color: var(--text);
+        padding: 1pt 6pt;
+        border-radius: 4pt;
+        font-family: 'SF Mono', Menlo, monospace;
+        font-size: 10pt;
+      }
+
+      /* ─── Cover ───────────────────────────────────────────── */
+
+      .cover {
+        page-break-after: always;
+        padding: 60pt 0 0;
+        text-align: center;
+      }
+
+      .cover .logo {
+        width: 120pt;
+        height: 120pt;
+        margin: 0 auto 28pt;
+        display: block;
+        filter: drop-shadow(0 8pt 24pt rgba(232, 121, 168, 0.3));
+      }
+
+      .cover h1 {
+        font-size: 44pt;
+        margin: 0 0 12pt;
+      }
+
+      .cover .tagline {
+        font-size: 14pt;
+        color: var(--muted);
+        max-width: 360pt;
+        margin: 0 auto 60pt;
+        line-height: 1.6;
+      }
+
+      .cover .subtitle {
+        font-size: 16pt;
+        color: var(--primary-strong);
+        font-weight: 700;
+      }
+
+      .cover .meta {
+        margin-top: 80pt;
+        font-size: 10pt;
+        color: var(--muted);
+      }
+
+      /* ─── TOC ─────────────────────────────────────────────── */
+
+      .toc {
+        page-break-after: always;
+      }
+
+      .toc ol {
+        list-style: none;
+        padding: 0;
+      }
+      .toc ol li {
+        padding: 8pt 0;
+        border-bottom: 1px dotted var(--border);
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        font-size: 12pt;
+      }
+      .toc ol li::before {
+        counter-increment: toc;
+        content: counter(toc) '.';
+        margin-right: 12pt;
+        color: var(--primary-strong);
+        font-weight: 700;
+        min-width: 22pt;
+      }
+      .toc ol {
+        counter-reset: toc;
+      }
+      .toc-title {
+        flex: 1;
+      }
+      .toc-page {
+        color: var(--muted);
+        font-size: 10pt;
+      }
+
+      /* ─── Callouts ────────────────────────────────────────── */
+
+      .tip,
+      .warn,
+      .step-box {
+        padding: 10pt 14pt;
+        border-radius: 8pt;
+        margin: 10pt 0 14pt;
+        page-break-inside: avoid;
+        border: 1px solid;
+      }
+      .tip {
+        background: var(--mint-soft);
+        border-color: var(--mint);
+        color: var(--mint-fg);
+      }
+      .warn {
+        background: var(--warn-bg);
+        border-color: #f0d18a;
+        color: var(--warn-fg);
+      }
+      .step-box {
+        background: var(--peach-soft);
+        border-color: #f0c890;
+        color: var(--peach-fg);
+      }
+      .tip strong,
+      .warn strong,
+      .step-box strong {
+        color: inherit;
+      }
+      .tip::before {
+        content: '💡 ';
+      }
+      .warn::before {
+        content: '⚠️ ';
+      }
+      .step-box::before {
+        content: '📌 ';
+      }
+
+      /* ─── UI mockups (text-based) ─────────────────────────── */
+
+      .mock {
+        background: linear-gradient(180deg, #fff8fb, #fff5ec);
+        border: 1px solid var(--border);
+        border-radius: 12pt;
+        padding: 14pt 16pt;
+        margin: 10pt 0 16pt;
+        font-size: 10pt;
+        line-height: 1.5;
+        page-break-inside: avoid;
+      }
+      .mock-title {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 11pt;
+        color: var(--primary-strong);
+        margin: 0 0 6pt;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .mock pre {
+        margin: 0;
+        font-family: 'SF Mono', Menlo, monospace;
+        font-size: 9.5pt;
+        color: var(--text);
+        white-space: pre-wrap;
+        line-height: 1.6;
+      }
+
+      /* ─── State-pill mock (for explanation table) ─────────── */
+
+      .pill-row {
+        display: flex;
+        align-items: center;
+        gap: 10pt;
+        padding: 6pt 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .pill-row:last-child {
+        border-bottom: none;
+      }
+      .pill-row .pill-mock {
+        flex-shrink: 0;
+        padding: 3pt 10pt;
+        border-radius: 999pt;
+        font-size: 9.5pt;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+      .pill-mock.live {
+        background: linear-gradient(135deg, #65d49a, #2e9b6c);
+        color: white;
+      }
+      .pill-mock.ok {
+        background: #dff5e8;
+        color: #2e7d5b;
+      }
+      .pill-mock.wait {
+        background: var(--peach-soft);
+        color: var(--peach-fg);
+      }
+      .pill-mock.idle {
+        background: #f0ebf4;
+        color: var(--muted);
+      }
+      .pill-mock.warn {
+        background: var(--warn-bg);
+        color: var(--warn-fg);
+      }
+      .pill-row p {
+        margin: 0;
+        font-size: 11pt;
+      }
+
+      /* ─── Section divider ─────────────────────────────────── */
+
+      .section {
+        page-break-before: always;
+      }
+
+      .section-num {
+        display: inline-block;
+        width: 28pt;
+        height: 28pt;
+        background: linear-gradient(
+          135deg,
+          var(--primary),
+          var(--primary-strong)
+        );
+        color: white;
+        border-radius: 50%;
+        text-align: center;
+        line-height: 28pt;
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 14pt;
+        margin-right: 10pt;
+        vertical-align: middle;
+      }
+
+      /* keep first H2 of section on same page as start */
+      .section h2 {
+        margin-top: 0;
+      }
+
+      /* close-of-doc */
+      .closing {
+        margin-top: 40pt;
+        padding-top: 20pt;
+        border-top: 2px solid var(--primary-soft);
+        text-align: center;
+        font-size: 11pt;
+        color: var(--muted);
+      }
+      .closing strong {
+        display: block;
+        font-size: 14pt;
+        margin-bottom: 6pt;
+        color: var(--primary-strong);
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ───────────────── COVER ───────────────── -->
+    <section class="cover">
+      <svg
+        class="logo"
+        viewBox="0 0 64 64"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <defs>
+          <linearGradient
+            id="bg"
+            x1="6"
+            y1="6"
+            x2="58"
+            y2="58"
+            gradientUnits="userSpaceOnUse"
+          >
+            <stop offset="0%" stop-color="#f4a6cd" />
+            <stop offset="50%" stop-color="#e879a8" />
+            <stop offset="100%" stop-color="#c39bdb" />
+          </linearGradient>
+          <linearGradient
+            id="x"
+            x1="20"
+            y1="20"
+            x2="44"
+            y2="44"
+            gradientUnits="userSpaceOnUse"
+          >
+            <stop offset="0%" stop-color="#ffffff" />
+            <stop offset="100%" stop-color="#fff0f6" />
+          </linearGradient>
+        </defs>
+        <rect width="64" height="64" rx="16" fill="url(#bg)" />
+        <rect width="64" height="32" rx="16" fill="#ffffff" opacity="0.12" />
+        <g
+          stroke="url(#x)"
+          stroke-width="6.5"
+          stroke-linecap="round"
+          fill="none"
+        >
+          <line x1="22" y1="22" x2="42" y2="42" />
+          <line x1="42" y1="22" x2="22" y2="42" />
+        </g>
+        <path
+          d="M48 12 L48.9 9.4 L49.8 12 L52.4 12.9 L49.8 13.8 L48.9 16.4 L48 13.8 L45.4 12.9 Z"
+          fill="#ffffff"
+        />
+        <circle cx="14" cy="50" r="1.6" fill="#ffffff" opacity="0.65" />
+      </svg>
+
+      <h1>คู่มือการใช้งาน</h1>
+      <div class="subtitle">Xautopost</div>
+      <p class="tagline">
+        ระบบโพสต์ X อัตโนมัติ หลายบัญชีในที่เดียว<br />
+        ฉบับสำหรับผู้เริ่มต้น อ่านแล้วใช้เป็นทันที
+      </p>
+      <p class="meta">เวอร์ชัน 0.0.11 · มกราคม 2026</p>
+    </section>
+
+    <!-- ───────────────── TOC ───────────────── -->
+    <section class="toc">
+      <h1 style="font-size: 28pt; color: var(--primary-strong)">สารบัญ</h1>
+      <ol>
+        <li>
+          <span class="toc-title">Xautopost คืออะไร และใช้ทำอะไรได้บ้าง</span>
+          <span class="toc-page">3</span>
+        </li>
+        <li>
+          <span class="toc-title">ดาวน์โหลดและติดตั้ง</span>
+          <span class="toc-page">4</span>
+        </li>
+        <li>
+          <span class="toc-title">เริ่มใช้งานครั้งแรก · สร้างโปรไฟล์</span>
+          <span class="toc-page">5</span>
+        </li>
+        <li>
+          <span class="toc-title">Setup Wizard · 4 ขั้นตอนเตรียมระบบ</span>
+          <span class="toc-page">6</span>
+        </li>
+        <li>
+          <span class="toc-title">ทำความรู้จักหน้าจอ</span>
+          <span class="toc-page">8</span>
+        </li>
+        <li>
+          <span class="toc-title">เพิ่มบัญชี X (login ผ่าน browser)</span>
+          <span class="toc-page">10</span>
+        </li>
+        <li>
+          <span class="toc-title">สไตล์การเขียน · AI vs เขียนเอง</span>
+          <span class="toc-page">11</span>
+        </li>
+        <li>
+          <span class="toc-title">เปิดโพสต์อัตโนมัติ</span>
+          <span class="toc-page">13</span>
+        </li>
+        <li>
+          <span class="toc-title">ดูสถานะแบบ realtime</span>
+          <span class="toc-page">14</span>
+        </li>
+        <li>
+          <span class="toc-title">ทดลองโพสต์ทันที</span>
+          <span class="toc-page">15</span>
+        </li>
+        <li>
+          <span class="toc-title">ตั้งค่าเวลาและความถี่</span>
+          <span class="toc-page">16</span>
+        </li>
+        <li>
+          <span class="toc-title">แก้ปัญหาที่พบบ่อย</span>
+          <span class="toc-page">17</span>
+        </li>
+        <li>
+          <span class="toc-title">เคล็ดลับใช้ระบบให้ได้ผล</span>
+          <span class="toc-page">19</span>
+        </li>
+      </ol>
+    </section>
+
+    <!-- ───────────────── 1. WHAT IS IT ───────────────── -->
+    <section class="section">
+      <h2><span class="section-num">1</span>Xautopost คืออะไร</h2>
+
+      <p>
+        Xautopost คือโปรแกรมเดสก์ท็อป (ติดตั้งบนคอมพิวเตอร์) สำหรับ
+        <strong>จัดการโพสต์ X (Twitter เดิม) หลายบัญชีพร้อมกัน</strong>
+        โดยที่ไม่ต้องเข้าออกแต่ละบัญชีเอง ระบบจะหมุนเวียนโพสต์ตามเวลาและความถี่
+        ที่คุณตั้งให้แต่ละบัญชี
+      </p>
+
+      <h3>สิ่งที่ทำได้</h3>
+      <ul>
+        <li>
+          <strong>หลายบัญชีในที่เดียว</strong> เพิ่มกี่บัญชีก็ได้
+          ระบบจัดการให้ทั้งหมดจากหน้าเดียว
+        </li>
+        <li>
+          <strong>โพสต์อัตโนมัติด้วย AI</strong> ใช้ OpenAI หรือ Google Gemini
+          เขียนทวีตให้ตามสไตล์ที่คุณกำหนด
+        </li>
+        <li>
+          <strong>โพสต์อัตโนมัติแบบเขียนเอง</strong> ไม่อยากใช้ AI ก็ได้
+          พิมพ์ข้อความเองหลายๆ แบบ ระบบจะสุ่มหยิบมาโพสต์
+        </li>
+        <li>
+          <strong>ตั้งช่วงเวลาและความถี่</strong> เช่น โพสต์ระหว่าง 9 โมงเช้า ถึง
+          22 โมงเย็น ทุก 30 นาทีถึง 2 ชั่วโมง ไม่เกิน 10 ครั้งต่อวัน
+        </li>
+        <li>
+          <strong>ปลอดภัย เก็บในเครื่อง</strong> ข้อมูลทุกอย่าง (cookie, API key,
+          รหัสผ่าน) เก็บไว้ในคอมพิวเตอร์คุณเอง เข้ารหัสครบ
+        </li>
+      </ul>
+
+      <div class="tip">
+        <strong>เหมาะกับใคร:</strong> ผู้สร้างคอนเทนต์, เอเจนซี่ Social Media,
+        คนทำหลายแบรนด์ ที่อยากเปิดบัญชี X หลายตัวและให้โพสต์ตามสไตล์เฉพาะของแต่ละบัญชี
+      </div>
+
+      <div class="warn">
+        <strong>สิ่งที่ต้องเตรียมก่อนเริ่ม:</strong>
+        <ol style="margin-top: 6pt; margin-bottom: 0">
+          <li>คอมพิวเตอร์ Mac (M1 ขึ้นไป) หรือ Windows 10/11</li>
+          <li>Google Chrome ติดตั้งในเครื่อง (จำเป็น)</li>
+          <li>บัญชี X ที่ต้องการให้ระบบโพสต์ พร้อมรหัสผ่าน</li>
+          <li>API Key ของ OpenAI หรือ Gemini (เฉพาะถ้าจะใช้ AI)</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ───────────────── 2. INSTALL ───────────────── -->
+    <section class="section">
+      <h2><span class="section-num">2</span>ดาวน์โหลดและติดตั้ง</h2>
+
+      <h3>ขั้นที่ 1 · เปิดหน้าดาวน์โหลด</h3>
+      <p>เปิดเบราว์เซอร์ ไปที่</p>
+      <p><code>https://mergedryio2.github.io/Xautopost/</code></p>
+      <p>
+        หน้าเว็บจะตรวจระบบของคุณอัตโนมัติ และเน้นปุ่มดาวน์โหลดที่เหมาะสม
+        (Mac Apple Silicon, Mac Intel, หรือ Windows) มีกรอบเขียนว่า
+        <strong>"แนะนำสำหรับเครื่องคุณ"</strong>
+      </p>
+
+      <h3>ขั้นที่ 2 · กดดาวน์โหลด</h3>
+      <ul>
+        <li>
+          ถ้าเป็น <strong>Mac</strong> จะได้ไฟล์ <code>.dmg</code> (ขนาด ~200 MB)
+        </li>
+        <li>
+          ถ้าเป็น <strong>Windows</strong> จะได้ไฟล์ <code>.exe</code> (ขนาด ~160 MB)
+        </li>
+      </ul>
+
+      <h3>ขั้นที่ 3 · ติดตั้ง</h3>
+
+      <h4>สำหรับ Mac</h4>
+      <ol>
+        <li>เปิดไฟล์ <code>.dmg</code> ที่ดาวน์โหลดมา</li>
+        <li>ลาก icon <strong>Xautopost</strong> ลงในโฟลเดอร์ <strong>Applications</strong></li>
+        <li>เปิดโปรแกรมจาก Launchpad หรือ Applications</li>
+      </ol>
+
+      <div class="warn">
+        <strong>ถ้า Mac แสดงข้อความ "แอปนี้เสียหาย" หรือ "ไม่สามารถเปิดได้":</strong>
+        เปิด Terminal (Spotlight ค้นว่า "Terminal") แล้วพิมพ์คำสั่งนี้แล้วกด Enter:
+        <p style="margin-top: 6pt">
+          <code>xattr -cr /Applications/Xautopost.app</code>
+        </p>
+        <p style="margin: 0">
+          จากนั้นเปิดแอปใหม่ ปกติเลย (เกิดเพราะแอปยังไม่ได้ลงทะเบียนกับ Apple)
+        </p>
+      </div>
+
+      <h4>สำหรับ Windows</h4>
+      <ol>
+        <li>เปิดไฟล์ <code>.exe</code> ที่ดาวน์โหลดมา</li>
+        <li>
+          ถ้าหน้า <strong>Windows SmartScreen</strong> ขึ้นมาเตือน ให้คลิก
+          <strong>"More info"</strong> แล้วคลิก <strong>"Run anyway"</strong>
+        </li>
+        <li>เลือกโฟลเดอร์ติดตั้ง (ปกติ <code>C:\Program Files\Xautopost</code>)</li>
+        <li>กด Install · เสร็จแล้วเปิดได้จาก Start Menu</li>
+      </ol>
+    </section>
+
+    <!-- ───────────────── 3. FIRST RUN ───────────────── -->
+    <section class="section">
+      <h2><span class="section-num">3</span>เริ่มใช้งานครั้งแรก</h2>
+
+      <p>
+        เมื่อเปิดแอปครั้งแรก จะเจอหน้า <strong>สร้างโปรไฟล์</strong>
+        ก่อน · โปรไฟล์คือ "บัญชีผู้ใช้ระบบ" ของคุณ
+        ใช้สำหรับล็อกอินเข้าแอป ไม่เกี่ยวกับบัญชี X
+      </p>
+
+      <h3>ขั้นที่ 1 · กรอกข้อมูล</h3>
+      <ol>
+        <li>
+          <strong>ชื่อโปรไฟล์</strong> · ตั้งเป็นชื่อเล่น เช่น "Mint",
+          "Workspace 1", "งานหลัก" ฯลฯ ใช้เพื่อจำว่าเป็นโปรไฟล์ใคร
+        </li>
+        <li>
+          <strong>รหัสผ่าน</strong> · ตั้งรหัสผ่านอย่างน้อย 4 ตัวอักษร
+          จำให้ดี เพราะใช้เปิดแอปครั้งต่อๆ ไป
+        </li>
+        <li>
+          <strong>สีโปรไฟล์</strong> · เลือกสีที่ชอบ ใช้เป็นสีตัวอักษรย่อในแอป
+        </li>
+      </ol>
+
+      <h3>ขั้นที่ 2 · กด "สร้างโปรไฟล์"</h3>
+      <p>
+        ระบบจะพาเข้า <strong>Setup Wizard</strong> 4 ขั้นตอน · แนะนำให้ทำตามไป
+        ใช้เวลาไม่เกิน 3 นาที
+      </p>
+
+      <div class="tip">
+        <strong>สร้างได้หลายโปรไฟล์</strong> · ถ้าใช้คอมเครื่องเดียวกันแต่อยากแยก
+        งานคนละ workspace เช่นบัญชีลูกค้า A กับบัญชีของตัวเอง สร้างได้เลย
+        แต่ละโปรไฟล์มีบัญชี X / API key / สไตล์การเขียน แยกกันทั้งหมด
+      </div>
+    </section>
+
+    <!-- ───────────────── 4. SETUP WIZARD ───────────────── -->
+    <section class="section">
+      <h2><span class="section-num">4</span>Setup Wizard · 4 ขั้นตอนเตรียมระบบ</h2>
+
+      <p>
+        Wizard เป็นตัวช่วยเริ่มต้นใช้งาน · ผ่านครบจะเริ่มโพสต์อัตโนมัติได้ทันที
+        · ข้ามข้ามไปทำทีหลังได้ทุกขั้น
+      </p>
+
+      <h3>ขั้นที่ 1 · ทักทาย</h3>
+      <p>
+        แค่กด <strong>"เริ่มกันเลย →"</strong> เพื่อไปต่อ
+      </p>
+
+      <h3>ขั้นที่ 2 · เชื่อม AI</h3>
+      <p>
+        เลือกว่าจะใช้ <strong>OpenAI (GPT)</strong> หรือ
+        <strong>Google Gemini</strong> · กดการ์ดที่ต้องการแล้วใส่ API Key
+      </p>
+
+      <div class="step-box">
+        <strong>วิธีหา API Key:</strong>
+        <ul style="margin: 6pt 0 0">
+          <li>
+            <strong>OpenAI</strong> ไปที่ <code>platform.openai.com/api-keys</code>
+            · กด Create new secret key · copy มาวาง · เริ่มต้นด้วย <code>sk-...</code>
+          </li>
+          <li>
+            <strong>Gemini</strong> ไปที่ <code>aistudio.google.com/apikey</code>
+            · กด Create API key · copy มาวาง · เริ่มต้นด้วย <code>AIza...</code>
+          </li>
+        </ul>
+      </div>
+
+      <p>
+        กรอก Key แล้วกด <strong>"เชื่อม AI →"</strong> · ระบบจะเก็บกุญแจ
+        เข้ารหัสในเครื่อง
+      </p>
+
+      <div class="tip">
+        <strong>ไม่อยากใช้ AI?</strong> · กด "ข้ามขั้นนี้"
+        แล้วใช้สไตล์ "เขียนเอง" ในขั้นถัดไป (ดูส่วน 7)
+      </div>
+
+      <h3>ขั้นที่ 3 · ตั้งสไตล์การเขียน</h3>
+      <p>
+        เลือก template สำเร็จรูป 1 อันจากที่มีให้ เช่น "คำคมให้กำลังใจ",
+        "ชวนกินอะไร", "ข่าวเทคย่อย", "มุกเบาๆ", "ก่อนนอน" หรือ "AI ตามใจ"
+        (เขียน prompt ให้ AI เอง)
+      </p>
+      <p>
+        หรือเลือก <strong>"📝 เขียนเอง"</strong> ที่ใช้ข้อความที่เราพิมพ์เอง
+        ไม่เรียก AI เลย
+      </p>
+      <p>
+        กด <strong>"ใช้สไตล์นี้ →"</strong> ระบบจะบันทึก
+      </p>
+
+      <h3>ขั้นที่ 4 · เพิ่มบัญชี X แรก</h3>
+      <p>
+        กด <strong>"เปิด browser เลย →"</strong> · จะมีหน้าต่าง Chrome
+        เปิดขึ้นมา ให้คุณ login เข้า X ตามปกติ
+      </p>
+
+      <div class="warn">
+        <strong>สำคัญ:</strong> login ด้วย <strong>email + รหัสผ่าน</strong>
+        ของบัญชี X โดยตรง · <strong>อย่ากด "Sign in with Google"</strong>
+        เพราะ Google จะตรวจจับว่าเป็น automated browser และบล็อก
+      </div>
+
+      <p>
+        เมื่อ login ผ่าน ระบบจะปิด browser อัตโนมัติ และบันทึก session
+        เข้ารหัสในเครื่อง · เห็นข้อความ <strong>"login สำเร็จ"</strong>
+        แสดงว่าใช้ได้แล้ว
+      </p>
+
+      <h3>ขั้นที่ 5 · เรียบร้อย</h3>
+      <p>
+        Wizard จะแสดง checklist ของสิ่งที่ตั้งค่าเสร็จ · กด
+        <strong>"ไปยังหน้าหลัก"</strong> เพื่อเริ่มใช้งาน
+      </p>
+    </section>
+
+    <!-- ───────────────── 5. UI TOUR ───────────────── -->
+    <section class="section">
+      <h2><span class="section-num">5</span>ทำความรู้จักหน้าจอ</h2>
+
+      <p>
+        แอปแบ่งเป็น 3 พื้นที่หลัก เปลี่ยนหน้าได้ที่แท็บด้านบน:
+      </p>
+
+      <h3>🏠 หน้าหลัก</h3>
+      <p>
+        ภาพรวมการทำงานของระบบ · ตอนนี้กำลังโพสต์อยู่หรือไม่ ·
+        บัญชีไหนทำงาน · เพิ่งโพสต์อะไรไปแล้วบ้าง
+      </p>
+
+      <div class="mock">
+        <div class="mock-title">หน้าหลักจะมีอะไรบ้าง</div>
+        <pre>┌─ Hero ──────────────────────────────────────────────┐
+│ 🐱  กำลังดูแล 3 จาก 5 บัญชีให้คุณอยู่              │
+│     ระบบจะสุ่มเวลาโพสต์ให้แต่ละบัญชี                 │
+└──────────────────────────────────────────────────────┘
+
+┌─ บัญชีที่กำลังหมุนเวียน ──────────────────────────┐
+│  M @account1  📮 กำลังโพสต์อยู่ตอนนี้              │
+│  N @account2  ⏱ รออีก 12 นาที                      │
+│  ...                                               │
+└──────────────────────────────────────────────────────┘
+
+┌─ โพสต์ล่าสุด ─────────────────────────────────────┐
+│  วันนี้ 18 ครั้ง · สำเร็จ 16 (89%)                 │
+│  10:23  สำเร็จ  @account1  สวัสดีตอนเช้า ✨         │
+│  10:14  สำเร็จ  @account2  วันนี้ลองอะไรใหม่ๆ      │
+└──────────────────────────────────────────────────────┘</pre>
+      </div>
+
+      <h3>🎭 บัญชี</h3>
+      <p>
+        จัดการบัญชี X · เพิ่ม/ลบ/แก้ไข · ตั้งสไตล์การเขียน · เปิด-ปิดโพสต์อัตโนมัติ
+      </p>
+
+      <h3>⚙️ ตั้งค่า</h3>
+      <p>
+        เชื่อม AI · จัดการ API key · โปรไฟล์ของคุณ · ดูประวัติการโพสต์ทั้งหมด
+      </p>
+
+      <h3>ปุ่มอื่นๆ ที่หัวจอ</h3>
+      <ul>
+        <li>
+          <strong>"ดูคู่มือเริ่มต้น"</strong> · เปิด Setup Wizard อีกครั้ง
+          ถ้าต้องการเริ่มใหม่หรือดูขั้นตอน
+        </li>
+        <li>
+          <strong>"ออกจากระบบ"</strong> · กลับไปหน้า login
+          (ข้อมูลทั้งหมดยังอยู่ในเครื่อง · login เข้ามาใหม่ได้ตามเดิม)
+        </li>
+      </ul>
+    </section>
+
+    <!-- ───────────────── 6. ADD ACCOUNT ───────────────── -->
+    <section class="section">
+      <h2><span class="section-num">6</span>เพิ่มบัญชี X (login ผ่าน browser)</h2>
+
+      <p>
+        ถ้ายังไม่ได้ทำในตอน Setup Wizard หรือต้องการเพิ่มบัญชีอีก:
+      </p>
+
+      <ol>
+        <li>ไปที่แท็บ <strong>🎭 บัญชี</strong></li>
+        <li>กดปุ่ม <strong>"+ เพิ่มบัญชี X"</strong> มุมขวาบน</li>
+        <li>
+          อ่านข้อความเตือน · กด <strong>"เปิด browser เลย"</strong>
+        </li>
+        <li>
+          หน้าต่าง Chrome จะเปิดมาที่ <strong>x.com</strong> · login
+          ด้วย email + รหัสผ่าน <strong>(ไม่ใช่ Sign in with Google)</strong>
+        </li>
+        <li>
+          พอ login ผ่าน หน้า X home จะโผล่ขึ้นมา · ระบบบันทึกอัตโนมัติ
+          ปิด browser ให้
+        </li>
+        <li>
+          กลับมาที่แอป · บัญชีจะปรากฏในรายการ พร้อมข้อความ "login สำเร็จ"
+        </li>
+      </ol>
+
+      <div class="warn">
+        <strong>มี 2FA?</strong> · ใส่ OTP/รหัสยืนยันใน browser ตามปกติได้เลย
+        ระบบจะรอจนคุณ login เสร็จ · หากต้อง verify email ก็ทำได้
+      </div>
+
+      <div class="tip">
+        <strong>ขีดจำกัด</strong> · ระบบรอ login ได้สูงสุด 5 นาที
+        ถ้าใช้เกินกว่านั้นจะยกเลิก · ลองอีกรอบได้
+      </div>
+    </section>
+
+    <!-- ───────────────── 7. STYLES ───────────────── -->
+    <section class="section">
+      <h2><span class="section-num">7</span>สไตล์การเขียน · AI vs เขียนเอง</h2>
+
+      <p>
+        แต่ละบัญชี X จะผูกกับ <strong>"สไตล์การเขียน"</strong> 1 อัน
+        ใช้กำหนดว่าจะโพสต์อะไรในแต่ละครั้ง · มี 2 รูปแบบใหญ่:
+      </p>
+
+      <h3>🤖 สไตล์ AI</h3>
+      <p>
+        ใช้ OpenAI หรือ Gemini สร้างทวีตให้ใหม่ทุกครั้ง · คุณบรรยายว่าอยาก
+        ให้ AI เขียนแนวไหน เช่น <em>"คำคมให้กำลังใจ ภาษาไทย ไม่เกิน 240 ตัวอักษร"</em>
+      </p>
+
+      <h4>ข้อดี</h4>
+      <ul>
+        <li>ทวีตใหม่ทุกครั้ง ไม่ซ้ำ</li>
+        <li>ปรับสไตล์ได้ละเอียด</li>
+      </ul>
+
+      <h4>ข้อเสีย</h4>
+      <ul>
+        <li>ต้องมี API key (มีค่าใช้จ่ายตามจริง · ปกติประมาณโพสต์ละ 1-2 บาท)</li>
+        <li>คุณภาพขึ้นกับ prompt ที่เขียนให้ AI</li>
+      </ul>
+
+      <h3>📝 สไตล์เขียนเอง</h3>
+      <p>
+        คุณพิมพ์ข้อความที่จะโพสต์เอง ใส่หลายๆ ข้อความก็ได้ · ระบบจะสุ่ม
+        หยิบมาโพสต์ครั้งละ 1 ข้อความ
+      </p>
+
+      <div class="step-box">
+        <strong>วิธีใส่หลายข้อความ:</strong> คั่นแต่ละข้อความด้วยบรรทัด
+        <code>---</code> (ขีด 3 ครั้ง) เช่น
+        <pre style="margin: 6pt 0 0; font-size: 9.5pt; background: white; padding: 6pt; border-radius: 4pt; line-height: 1.5">สวัสดีตอนเช้าค่ะ ขอให้วันนี้เป็นวันที่ดี
+---
+เช้านี้กาแฟแก้วโปรดต้องมา
+---
+วันใหม่ ลองอะไรใหม่ๆ ดูบ้าง</pre>
+      </div>
+
+      <h4>ข้อดี</h4>
+      <ul>
+        <li>ไม่ต้องเชื่อม AI · ไม่มีค่าใช้จ่าย</li>
+        <li>ควบคุมเนื้อหาได้ทุกตัวอักษร</li>
+      </ul>
+
+      <h4>ข้อเสีย</h4>
+      <ul>
+        <li>
+          <strong>X ไม่อนุญาตให้โพสต์ข้อความเดียวกันซ้ำใน 24 ชม.</strong>
+          ถ้าใส่ข้อความน้อยจะหยิบซ้ำและถูก reject
+        </li>
+        <li>ต้องอัพเดตข้อความเองเป็นระยะ ไม่งั้นคนอ่านเดาง่าย</li>
+      </ul>
+
+      <h3>🎲 ระบบกันโพสต์ซ้ำอัตโนมัติ</h3>
+      <p>
+        สไตล์ "เขียนเอง" มี toggle <strong>"ใส่อิโมจิสุ่มท้ายแต่ละโพสต์"</strong>
+        เปิดไว้ตามค่า default · ระบบจะหยิบ emoji 1 ตัวจากชุด 38 ตัวต่อท้ายข้อความ
+        ทุกครั้ง ทำให้แต่ละโพสต์ไม่เหมือนกัน 100% (เช่น <em>"สวัสดี ✨"</em>,
+        <em>"สวัสดี 🌸"</em>, <em>"สวัสดี 💛"</em>)
+      </p>
+
+      <div class="tip">
+        <strong>ใส่ข้อความเท่าไหร่ดี?</strong> · ขั้นต่ำ <strong>3-5 ข้อความ</strong>
+        ถ้าเปิดอิโมจิสุ่มไว้ · หรือ <strong>10+ ข้อความ</strong> ถ้าปิดอิโมจิสุ่ม
+      </div>
+
+      <h3>วิธีตั้งสไตล์ให้บัญชี</h3>
+      <ol>
+        <li>ไปแท็บ <strong>🎭 บัญชี</strong></li>
+        <li>
+          ที่การ์ดของบัญชีที่ต้องการ ในแถบ "✦ ยังไม่ได้ตั้งสไตล์การเขียน"
+          กดปุ่ม <strong>"ตั้งสไตล์"</strong>
+        </li>
+        <li>
+          จะเปิดหน้าเลือกสไตล์ · เลือกจาก "สไตล์ที่มีอยู่แล้ว" หรือสร้างใหม่จาก
+          template
+        </li>
+        <li>กด → สไตล์จะผูกกับบัญชีนั้น</li>
+      </ol>
+    </section>
+
+    <!-- ───────────────── 8. ENABLE ROTATION ───────────────── -->
+    <section class="section">
+      <h2><span class="section-num">8</span>เปิดโพสต์อัตโนมัติ</h2>
+
+      <p>
+        เมื่อมี <strong>บัญชี X</strong> + <strong>สไตล์การเขียน</strong> ครบแล้ว
+        ก็เปิดให้ระบบโพสต์อัตโนมัติได้
+      </p>
+
+      <h3>วิธีเปิด</h3>
+      <ol>
+        <li>ไปแท็บ <strong>🎭 บัญชี</strong></li>
+        <li>
+          ที่การ์ดของบัญชีที่ต้องการ ดูสวิตช์ทางขวา · ตอนนี้น่าจะเขียนว่า
+          <strong>"หยุดอยู่"</strong> สีเทา
+        </li>
+        <li>
+          กดสวิตช์ · มันจะกลายเป็นสีเขียวมินต์เขียนว่า
+          <strong>"อัตโนมัติ"</strong>
+        </li>
+        <li>
+          เห็นแถบเขียวอ่อนที่บอกว่า "✓ กำลังโพสต์อัตโนมัติ · ระหว่าง 09:00-22:00
+          ทุก 30-120 นาที ไม่เกิน 10 ครั้งต่อวัน" → เรียบร้อย
+        </li>
+      </ol>
+
+      <div class="warn">
+        <strong>ถ้าสวิตช์กดไม่ได้</strong> · แสดงว่ายังไม่ได้ตั้งสไตล์การเขียน
+        ตั้งให้ก่อนถึงจะเปิดได้
+      </div>
+
+      <h3>วิธีปิด</h3>
+      <p>
+        กดสวิตช์อีกครั้ง · กลายเป็นสีเทา "หยุดอยู่" · ระบบจะหยุดโพสต์ทันที
+        แต่ session login + ข้อมูลต่างๆ ยังเก็บไว้ครบ
+      </p>
+
+      <div class="tip">
+        <strong>เปิดทีละบัญชีหรือทั้งหมด</strong> · เปิด-ปิดได้อิสระต่อบัญชี
+        เช่น เปิด @account1 อย่างเดียว ส่วน @account2 หยุด
+      </div>
+    </section>
+
+    <!-- ───────────────── 9. STATUS ───────────────── -->
+    <section class="section">
+      <h2><span class="section-num">9</span>ดูสถานะแบบ realtime</h2>
+
+      <p>
+        ที่ <strong>🏠 หน้าหลัก</strong> · "บัญชีที่กำลังหมุนเวียน"
+        จะมีสติกเกอร์สีต่างๆ บอกสถานะของแต่ละบัญชี อัพเดททุก 5 วินาที:
+      </p>
+
+      <div class="mock">
+        <div class="pill-row">
+          <span class="pill-mock live">📮 กำลังโพสต์อยู่ตอนนี้</span>
+          <p>ระบบเปิด browser โพสต์อยู่ · จะเห็นหน้าต่าง Chrome เด้งขึ้นมา</p>
+        </div>
+        <div class="pill-row">
+          <span class="pill-mock ok">🟢 พร้อมโพสต์ทุกเมื่อ · 5/10 วันนี้</span>
+          <p>พร้อมโพสต์แล้ว · รอ tick ถัดไปของ scheduler</p>
+        </div>
+        <div class="pill-row">
+          <span class="pill-mock wait">⏱ รออีก 12 นาที – 1 ชม.</span>
+          <p>เพิ่งโพสต์ไป กำลังนับเวลารอช่วงต่อไป</p>
+        </div>
+        <div class="pill-row">
+          <span class="pill-mock idle">🌙 พักนอกช่วงเวลา · เริ่มอีกครั้ง 09:00</span>
+          <p>ตอนนี้นอกช่วงเวลาที่ตั้งไว้ (เช่น เปิดเฉพาะ 9 โมง-22 โมง)</p>
+        </div>
+        <div class="pill-row">
+          <span class="pill-mock idle">🛑 ครบโควต้าวันนี้ (10/10) · พรุ่งนี้</span>
+          <p>โพสต์ครบจำนวนสูงสุดที่ตั้งไว้ · เริ่มใหม่อัตโนมัติเมื่อข้ามวัน</p>
+        </div>
+        <div class="pill-row">
+          <span class="pill-mock warn">⚠️ ยังไม่ได้ตั้งสไตล์การเขียน</span>
+          <p>ต้องตั้งสไตล์ก่อน บัญชีถึงจะเริ่มโพสต์ได้</p>
+        </div>
+      </div>
+
+      <p>
+        บัญชีที่ <strong>"กำลังโพสต์อยู่ตอนนี้"</strong> การ์ดจะมีขอบสีเขียวมินต์
+        + ป้ายเต้นเป็นจังหวะ · เห็นชัดว่าตอนนี้กำลังทำงาน
+      </p>
+
+      <div class="tip">
+        <strong>มีบัญชีเกิน 4?</strong> · หน้าหลักจะแสดง 4 บัญชีแรก (เรียง
+        ตามที่กำลังจะโพสต์ก่อน) · กดปุ่ม <strong>"ดูทั้งหมด"</strong>
+        เพื่อเปิด modal ใหญ่ดูครบทุกบัญชี
+      </div>
+    </section>
+
+    <!-- ───────────────── 10. TEST POST ───────────────── -->
+    <section class="section">
+      <h2><span class="section-num">10</span>ทดลองโพสต์ทันที</h2>
+
+      <p>
+        ถ้าอยากทดสอบว่าระบบโพสต์ได้จริงไหม โดยไม่ต้องรอ scheduler:
+      </p>
+
+      <ol>
+        <li>ไปแท็บ <strong>🎭 บัญชี</strong></li>
+        <li>กดปุ่ม <strong>"ทดลองโพสต์"</strong> มุมขวาบน</li>
+        <li>
+          เลือกบัญชีที่จะให้โพสต์ (ติ๊กได้หลายบัญชี · กด "เลือกทั้งหมด" ก็ได้)
+        </li>
+        <li>
+          เลือกสไตล์การเขียน · กด <strong>"✨ ให้ AI ลองเขียน"</strong>
+          (สำหรับ AI mode) หรือ <strong>"🎲 หยิบข้อความสุ่ม"</strong>
+          (สำหรับ manual mode) เพื่อให้ระบบใส่ข้อความให้
+        </li>
+        <li>
+          ตรวจสอบเนื้อหาในกล่อง · แก้ไขได้ตามต้องการ · ความยาวไม่เกิน 280 ตัวอักษร
+        </li>
+        <li>กด <strong>"โพสต์เลย (X บัญชี)"</strong></li>
+      </ol>
+
+      <p>
+        ระบบจะเปิด Chrome ทีละบัญชี โพสต์ทีละบัญชี (sequential)
+        เห็น progress bar real-time · ผลลัพธ์แสดงด้านล่าง:
+      </p>
+
+      <ul>
+        <li><strong>🟢 สำเร็จ</strong> · โพสต์ขึ้น X แล้ว</li>
+        <li><strong>🔴 ไม่สำเร็จ</strong> · พร้อมเหตุผล (เช่น session หมดอายุ, content ซ้ำ)</li>
+      </ul>
+    </section>
+
+    <!-- ───────────────── 11. TIME SETTINGS ───────────────── -->
+    <section class="section">
+      <h2><span class="section-num">11</span>ตั้งค่าเวลาและความถี่</h2>
+
+      <p>
+        แต่ละบัญชีตั้งเวลาเป็นของตัวเอง · ที่การ์ดบัญชี กดปุ่ม
+        <strong>"ตั้งค่าเวลา"</strong>
+      </p>
+
+      <h3>ช่วงเวลาที่จะโพสต์</h3>
+      <p>เลือกจาก preset 4 อัน หรือ "กำหนดเอง":</p>
+      <ul>
+        <li><strong>ตลอดวัน</strong> · 00:00–23:00 (โพสต์ได้ทุกชั่วโมง)</li>
+        <li><strong>เช้า-ค่ำ</strong> · 07:00–22:00 (เช้าตื่นถึงดึก)</li>
+        <li><strong>กลางวัน</strong> · 09:00–18:00 (เวลาทำงาน)</li>
+        <li><strong>เย็น-ดึก</strong> · 17:00–23:00 (หลังเลิกงาน)</li>
+        <li><strong>กำหนดเอง</strong> · เลือกชั่วโมงเริ่มและหยุดเอง</li>
+      </ul>
+
+      <h3>โพสต์ได้สูงสุดต่อวัน</h3>
+      <p>
+        ตัวเลขกำหนด <strong>จำนวนครั้งสูงสุดต่อ 24 ชม.</strong>
+        ค่า default คือ 10 · เมื่อครบจำนวนระบบจะหยุดบัญชีนั้น เริ่มใหม่อัตโนมัติ
+        เมื่อข้ามเที่ยงคืน
+      </p>
+
+      <h3>เว้นช่วงระหว่างโพสต์</h3>
+      <p>
+        กำหนด <strong>ต่ำสุด</strong> และ <strong>สูงสุด</strong> เป็นนาที
+        · ระบบจะสุ่มเวลาในช่วงนี้ทุกครั้ง ทำให้ดูเป็นธรรมชาติ
+        ไม่เหมือน bot โพสต์ตรงเวลา
+      </p>
+
+      <div class="warn">
+        <strong>ขั้นต่ำ 5 นาที</strong> · X จะตรวจจับ pattern ของ bot
+        ถ้าโพสต์ถี่กว่านี้ · ตั้งสูงๆ ปลอดภัยกว่า เช่น 30-120 นาที
+      </div>
+
+      <div class="tip">
+        <strong>คำแนะนำเริ่มต้น:</strong>
+        <ul style="margin: 6pt 0 0">
+          <li>ช่วงเวลา · เช้า-ค่ำ (07:00–22:00)</li>
+          <li>โพสต์สูงสุด · 8-12 ครั้งต่อวัน</li>
+          <li>เว้นช่วง · ต่ำสุด 60 นาที สูงสุด 240 นาที</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ───────────────── 12. TROUBLESHOOTING ───────────────── -->
+    <section class="section">
+      <h2><span class="section-num">12</span>แก้ปัญหาที่พบบ่อย</h2>
+
+      <h3>โพสต์ไม่สำเร็จ · "X ไม่ได้รับโพสต์"</h3>
+      <p>
+        เกิดได้หลายสาเหตุ:
+      </p>
+      <ul>
+        <li>
+          <strong>เนื้อหาซ้ำ</strong> (X reject duplicate content ภายใน 24 ชม.)
+          · ใช้สไตล์เขียนเองเปิด "อิโมจิสุ่ม" ไว้, หรือเพิ่มข้อความหลายๆ แบบ
+        </li>
+        <li>
+          <strong>ติด rate limit ชั่วคราว</strong> · ลดความถี่ลง · เพิ่มเวลาเว้น
+          · พักไป 1-2 ชั่วโมง
+        </li>
+        <li>
+          <strong>บัญชีถูกจำกัด</strong> · X อาจล็อกบัญชีให้ verify ตัวตน
+          · ลอง login ตรงๆ ที่ x.com ดูว่ามี popup ขอ verify หรือไม่
+        </li>
+      </ul>
+
+      <h3>โพสต์ไม่สำเร็จ · "session หมดอายุ"</h3>
+      <p>
+        Cookies ที่บันทึกไว้หมดอายุ (ปกติ X จะให้ใช้ ~30 วัน)
+      </p>
+      <ol>
+        <li>ลบบัญชีออกจากแอป (ปุ่ม "ลบบัญชี")</li>
+        <li>เพิ่มบัญชีใหม่ login เข้าใหม่</li>
+        <li>ตั้งสไตล์ + เปิด rotation อีกครั้ง</li>
+      </ol>
+
+      <h3>หน้า Chrome เปิดมาแล้ว Google block</h3>
+      <p>
+        คุณคงกด <strong>"Sign in with Google"</strong> · Google detect automated
+        browser แล้ว block · กลับไปกด "ใช้ email" หรือ "Use another account"
+        แล้ว login ด้วย email/รหัสผ่าน X โดยตรง
+      </p>
+
+      <h3>AI generate ล้มเหลว</h3>
+      <ul>
+        <li>เช็ค API key ยังใช้ได้อยู่ไหม (ไม่หมดอายุ, ไม่หมด credit)</li>
+        <li>ลองเปลี่ยนรุ่นโมเดล · กด "ขั้นสูง" ในฟอร์มสไตล์</li>
+        <li>ตรวจ prompt · บางครั้ง prompt ยาวเกินทำให้ AI งง</li>
+      </ul>
+
+      <h3>"missing X-Operator-Id header"</h3>
+      <p>
+        ถ้าเจอ error นี้ · ลอง <strong>ออกจากระบบ</strong> แล้ว login เข้าใหม่
+        · ปกติเกิดเมื่อ session ของแอปไม่ sync กัน
+      </p>
+
+      <h3>แอปไม่เปิดเลย / ค้าง</h3>
+      <ol>
+        <li>
+          ปิดแอปสนิท (Mac: Cmd+Q · Windows: Right click taskbar → Quit)
+        </li>
+        <li>เปิดใหม่</li>
+        <li>
+          ถ้ายังค้าง · ลบแอปแล้วติดตั้งใหม่ (ข้อมูลในเครื่องไม่หาย เพราะอยู่
+          คนละตำแหน่งกับโปรแกรม)
+        </li>
+      </ol>
+    </section>
+
+    <!-- ───────────────── 13. TIPS ───────────────── -->
+    <section class="section">
+      <h2><span class="section-num">13</span>เคล็ดลับใช้ระบบให้ได้ผล</h2>
+
+      <h3>กันโดน X ระงับบัญชี</h3>
+      <ul>
+        <li>
+          <strong>อย่าตั้งความถี่ถี่เกิน</strong> · 30-120 นาทีปลอดภัย
+          · ต่ำกว่า 15 นาทีเสี่ยง
+        </li>
+        <li>
+          <strong>เปิด "อิโมจิสุ่ม"</strong> สำหรับสไตล์เขียนเอง · กัน
+          duplicate detection
+        </li>
+        <li>
+          <strong>ไม่ต้องโพสต์ 24 ชม.</strong> · ตั้งช่วงเวลาเหมือนคนใช้จริง
+          · เช่น 7:00-23:00
+        </li>
+        <li>
+          <strong>เริ่มน้อยๆ ก่อน</strong> · บัญชีใหม่ตั้ง daily limit 5 ครั้ง
+          · ค่อยเพิ่มเป็น 10-15 หลัง 1-2 สัปดาห์
+        </li>
+      </ul>
+
+      <h3>เลือก AI ตัวไหนดี</h3>
+      <ul>
+        <li>
+          <strong>OpenAI GPT-4o-mini</strong> · ราคาถูก คุณภาพดีพอ ภาษาไทยใช้ได้
+          · เหมาะกับการใช้ระยะยาว
+        </li>
+        <li>
+          <strong>Google Gemini 2.5 Flash</strong> · ฟรีระดับหนึ่ง · ความเร็วเท่ากัน
+          · บางครั้งภาษาไทยติดๆ ขัดๆ
+        </li>
+      </ul>
+
+      <h3>เขียน AI prompt อย่างไรให้ได้ผล</h3>
+      <ol>
+        <li>
+          <strong>บอกบทบาท</strong> · "คุณเป็น content creator ที่..."
+        </li>
+        <li>
+          <strong>กำหนดความยาว</strong> · "ความยาวไม่เกิน 240 ตัวอักษร"
+        </li>
+        <li>
+          <strong>กำหนดภาษา</strong> · "เขียนเป็นภาษาไทย"
+        </li>
+        <li>
+          <strong>ห้ามชัด</strong> · "ห้ามใส่ # · ห้ามใช้ emoji เกิน 2 ตัว"
+        </li>
+        <li>
+          <strong>ขอความหลากหลาย</strong> · "ทุกครั้งให้แตกต่างกัน
+          หลีกเลี่ยงการซ้ำเดิม"
+        </li>
+      </ol>
+
+      <div class="step-box">
+        <strong>ตัวอย่าง prompt ที่ใช้ได้ดี:</strong>
+        <p style="margin: 6pt 0 0">
+          <em>
+            "คุณเป็นคนเขียนคำคมให้กำลังใจคนไทยบน X · เขียนเป็นภาษาไทย ·
+            ความยาวไม่เกิน 240 ตัวอักษร · น้ำเสียงอบอุ่นจริงใจ ·
+            ห้ามใช้ภาษาตลาด · ห้ามใส่ # หรือ emoji เกิน 2 ตัว ·
+            ทุกครั้งให้สร้างคำคมที่แตกต่างจากครั้งก่อน"
+          </em>
+        </p>
+      </div>
+
+      <h3>เก็บประวัติการโพสต์</h3>
+      <p>
+        ทุกความพยายามโพสต์ (สำเร็จ/ล้มเหลว/ข้าม) ถูกบันทึกไว้
+        · ดูได้ที่ <strong>⚙️ ตั้งค่า</strong> →
+        <strong>"📜 ประวัติการโพสต์ทั้งหมด"</strong> · กรองตามบัญชีและสถานะได้
+      </p>
+
+      <h3>ใช้ proxy?</h3>
+      <p>
+        เวอร์ชันนี้ตัด proxy ออก · ถ้าต้องการเปลี่ยน IP ให้แต่ละบัญชี
+        ใช้ VPN ระดับเครื่องแทน หรือรอเวอร์ชันถัดไป
+      </p>
+
+      <div class="closing">
+        <strong>ขอให้ใช้สนุก ✨</strong>
+        ถ้ามีคำถามหรือเจอ bug · เปิด issue ที่<br />
+        <code>github.com/Mergedryio2/Xautopost/issues</code>
+      </div>
+    </section>
+  </body>
+</html>
