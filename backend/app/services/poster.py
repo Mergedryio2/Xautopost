@@ -168,7 +168,11 @@ async def _do_post(
                 # keydown/keyup/input events that React's contenteditable
                 # picks up — bypassing both traps.
                 await editor.focus()
-                await asyncio.sleep(0.3)
+                # Human-like pause between focusing the editor and starting
+                # to type. With only 0.3s the cursor barely lands before
+                # text streams out, which both looks bot-like and sometimes
+                # races X's focus logic. ~2.5s feels natural to a watcher.
+                await asyncio.sleep(2.5)
                 await page.keyboard.type(content, delay=12)
                 await asyncio.sleep(1.2)  # let React debounce + state propagate
 
