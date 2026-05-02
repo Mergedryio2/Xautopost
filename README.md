@@ -68,8 +68,8 @@ npm run build:win   # produces .exe in desktop/dist (run on Windows)
 CI builds via GitHub Actions on git tag `v*`:
 
 ```bash
-git tag v0.0.2
-git push --tags
+git tag v0.0.3
+git push origin v0.0.3
 ```
 
 `.github/workflows/build.yml` runs the matrix on `macos-latest` +
