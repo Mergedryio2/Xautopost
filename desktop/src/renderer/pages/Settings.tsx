@@ -365,7 +365,7 @@ function ProfileSection({
         <div className="row-info">
           <div className="row-title">{operator.name}</div>
           <div className="row-meta">
-            <span className="muted-note" style={{ margin: 0 }}>
+            <span className="muted-note is-inline">
               เริ่มใช้งาน {formatTime(operator.created_at)}
             </span>
           </div>
@@ -392,7 +392,7 @@ function ProfileSection({
 
       {showAdvanced && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <p className="muted-note" style={{ margin: 0 }}>
+          <p className="muted-note is-inline">
             ระบบจะตรวจดูบัญชีต่างๆ ทุก {formatInterval(interval)} เพื่อเลือกบัญชีถัดไปที่จะโพสต์ ถ้าตั้งถี่เกินอาจถูก rate limit ค่ะ
           </p>
           <IntervalPicker
@@ -508,7 +508,7 @@ function HistorySection() {
         <span style={{ color: 'var(--text)', fontSize: 14 }}>
           ประวัติการโพสต์ทั้งหมด
         </span>
-        <span className="muted-note" style={{ margin: 0 }}>
+        <span className="muted-note is-inline">
           ดู log ทุกการโพสต์ พร้อมเหตุผลถ้าล้มเหลว
         </span>
         <span className="accordion-arrow">▸</span>
@@ -608,7 +608,7 @@ function HistorySection() {
                     {loading ? 'กำลังโหลด…' : `ดูเพิ่ม (+${PAGE_SIZE})`}
                   </button>
                 ) : (
-                  <span className="muted-note" style={{ margin: 0 }}>
+                  <span className="muted-note is-inline">
                     แสดงครบทุกรายการแล้ว · {logs.length} รายการ
                   </span>
                 )}

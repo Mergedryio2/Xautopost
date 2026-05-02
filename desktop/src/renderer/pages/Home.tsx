@@ -45,22 +45,6 @@ export function Home({
     }
   }
 
-  useEffect(() => {
-    refresh()
-    // 8s server poll: catches `is_posting=true` while a browser is open
-    // (a single post takes ~30-60s) so the live indicator shows up
-    // promptly when the scheduler kicks off a post.
-    const id = setInterval(refresh, 8_000)
-    return () => clearInterval(id)
-  }, [])
-
-  // 5s client tick to refresh "ago" labels and per-account countdowns
-  // without paying server round-trips.
-  useEffect(() => {
-    const id = setInterval(() => forceTick((n) => n + 1), 5_000)
-    return () => clearInterval(id)
-  }, [])
-
   const [showAllAccounts, setShowAllAccounts] = useState(false)
 
   // Sort active accounts by state priority so the user sees the most
@@ -73,6 +57,31 @@ export function Home({
       .map((acc) => ({ acc, state: deriveAccountState(acc, logs) }))
       .sort((a, b) => a.state.priority - b.state.priority)
   }, [accounts, logs])
+
+  const hasActive = activeSorted.length > 0
+
+  // Initial fetch on mount.
+  useEffect(() => {
+    refresh()
+  }, [])
+
+  // Server poll cadence: 8s when accounts are actively rotating (catches
+  // the brief is_posting=true window while a browser is open), 30s when
+  // everything's paused (backend state can't change without user input).
+  useEffect(() => {
+    const interval = hasActive ? 8_000 : 30_000
+    const id = setInterval(refresh, interval)
+    return () => clearInterval(id)
+  }, [hasActive])
+
+  // Client-side tick to refresh "ago" labels and per-account countdowns
+  // without server round-trips. Faster (5s) when active so countdowns
+  // feel live; slower (15s) at rest because nothing's changing visually.
+  useEffect(() => {
+    const interval = hasActive ? 5_000 : 15_000
+    const id = setInterval(() => forceTick((n) => n + 1), interval)
+    return () => clearInterval(id)
+  }, [hasActive])
 
   const todayLogs = useMemo(
     () => logs.filter((l) => isToday(l.timestamp)),
@@ -145,7 +154,7 @@ export function Home({
 
       {activeSorted.length > 0 && (
         <section className="card">
-          <div className="section-head" style={{ marginBottom: 12 }}>
+          <div className="section-head is-tight">
             <h3 className="card-title" style={{ margin: 0 }}>
               บัญชีที่กำลังหมุนเวียน
             </h3>
@@ -210,7 +219,7 @@ export function Home({
           style={{ marginBottom: 12 }}
         >
           <div>
-            <h3 className="section-title" style={{ fontSize: 16 }}>
+            <h3 className="section-title is-small">
               โพสต์ล่าสุด
             </h3>
             <p className="section-sub">
@@ -300,10 +309,10 @@ function AccountCard({
         <StatePill state={state} />
       </div>
       <div className="row-meta">
-        <span className="muted-note" style={{ margin: 0 }}>
+        <span className="muted-note is-inline">
           ⏱ ทุก {acc.min_interval_minutes}–{acc.max_interval_minutes} นาที
         </span>
-        <span className="muted-note" style={{ margin: 0 }}>
+        <span className="muted-note is-inline">
           ☀️ {formatHour(acc.active_hours_start)}–
           {formatHour(acc.active_hours_end)}
         </span>

@@ -105,7 +105,7 @@ export function IntervalPicker({
       </div>
       {isCustom && (
         <div className="interval-custom">
-          <span className="muted-note" style={{ margin: 0 }}>
+          <span className="muted-note is-inline">
             ทุก
           </span>
           <input

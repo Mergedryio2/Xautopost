@@ -205,6 +205,12 @@ body {
   margin: 14px 0 0;
   line-height: 1.6;
 }
+/* Used as inline meta inside row-meta / interval-custom / etc — no
+   top margin needed since it sits in a flex/grid layout, not after
+   a paragraph. Avoids `style={{ margin: 0 }}` overrides everywhere. */
+.muted-note.is-inline {
+  margin: 0;
+}
 
 .helper-callout {
   display: flex;
@@ -717,6 +723,9 @@ body {
   gap: 12px;
   margin-bottom: 16px;
 }
+.section-head.is-tight {
+  margin-bottom: 12px;
+}
 .section-actions {
   display: flex;
   gap: 8px;
@@ -727,6 +736,9 @@ body {
   font-weight: 700;
   font-size: 18px;
   margin: 0;
+}
+.section-title.is-small {
+  font-size: 16px;
 }
 .section-sub {
   margin: 2px 0 0;
@@ -1841,4 +1853,27 @@ pre.code {
   .interval-chips { grid-template-columns: repeat(2, 1fr); }
   .field-row { grid-template-columns: 1fr; }
   .home-account-grid { grid-template-columns: 1fr; }
+}
+
+/* ─── Reduced motion ──────────────────────────────────────────
+   Respect OS-level "reduce motion" preference (vestibular
+   sensitivity). Kill all decorative looping animations; keep
+   transitions instant so the UI is still responsive.
+─────────────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .mascot-working,
+  .mascot-zzz,
+  .state-pill.tone-live,
+  .pill.live::before,
+  .dots span {
+    animation: none;
+  }
+  /* Cut transition durations to "snap" so users still get the
+     before/after state change without easing motion. */
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
