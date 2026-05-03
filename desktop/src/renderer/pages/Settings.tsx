@@ -402,7 +402,7 @@ function ProfileSection({
           <IntervalPicker
             value={interval}
             onChange={setIntervalSec}
-            min={5}
+            min={1}
             max={3600}
           />
 
