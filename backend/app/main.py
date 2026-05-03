@@ -13,7 +13,7 @@ from app.api import accounts, api_keys, logs, media, operators, prompts, proxies
 from app.db.database import init_db
 from app.services.scheduler import scheduler
 
-VERSION = "0.0.12"
+VERSION = "0.0.13"
 PORT = int(os.environ.get("XAUTOPOST_PORT", "8765"))
 TOKEN = os.environ.get("XAUTOPOST_TOKEN", "")
 

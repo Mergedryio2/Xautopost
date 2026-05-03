@@ -1,6 +1,6 @@
 [project]
 name = "xautopost-backend"
-version = "0.0.12"
+version = "0.0.13"
 description = "Xautopost Python sidecar (FastAPI + Playwright)"
 requires-python = ">=3.11"
 dependencies = [
