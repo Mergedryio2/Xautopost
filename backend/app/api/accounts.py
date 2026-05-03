@@ -52,9 +52,9 @@ class XAccountUpdate(BaseModel):
     posting_enabled: bool | None = None
     # 0 = unlimited; otherwise a daily ceiling.
     daily_limit: int | None = Field(default=None, ge=0, le=100000)
-    # Per-account spacing in seconds. 5s floor matches the UI; 86400s = 24h cap.
-    min_interval_seconds: int | None = Field(default=None, ge=5, le=86400)
-    max_interval_seconds: int | None = Field(default=None, ge=5, le=86400)
+    # Per-account spacing in seconds. 1s floor matches the UI; 86400s = 24h cap.
+    min_interval_seconds: int | None = Field(default=None, ge=1, le=86400)
+    max_interval_seconds: int | None = Field(default=None, ge=1, le=86400)
     active_hours_start: int | None = Field(default=None, ge=0, le=23)
     active_hours_end: int | None = Field(default=None, ge=0, le=23)
     proxy_id: int | None = None

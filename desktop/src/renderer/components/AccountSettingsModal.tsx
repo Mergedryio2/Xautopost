@@ -54,8 +54,8 @@ export function AccountSettingsModal({
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     setError(null)
-    if (minInterval < 5 || maxInterval < 5) {
-      setError('ช่วงห่างต่ำสุดและสูงสุดต้องไม่น้อยกว่า 5 วินาที')
+    if (minInterval < 1 || maxInterval < 1) {
+      setError('ช่วงห่างต่ำสุดและสูงสุดต้องไม่น้อยกว่า 1 วินาที')
       return
     }
     if (minInterval > maxInterval) {
@@ -234,7 +234,7 @@ export function AccountSettingsModal({
               </span>
               <input
                 type="number"
-                min={5}
+                min={1}
                 max={86400}
                 value={minInterval}
                 onChange={(e) => setMinInterval(Number(e.target.value))}
@@ -249,7 +249,7 @@ export function AccountSettingsModal({
               </span>
               <input
                 type="number"
-                min={5}
+                min={1}
                 max={86400}
                 value={maxInterval}
                 onChange={(e) => setMaxInterval(Number(e.target.value))}
@@ -260,7 +260,7 @@ export function AccountSettingsModal({
             </label>
           </div>
           <p className="muted-note" style={{ margin: '4px 0 0' }}>
-            ระบบจะสุ่มเวลาในช่วงนี้ทุกครั้ง เพื่อให้ดูเป็นธรรมชาติ · ต่ำสุด 5 วินาที
+            ระบบจะสุ่มเวลาในช่วงนี้ทุกครั้ง เพื่อให้ดูเป็นธรรมชาติ · ต่ำสุด 1 วินาที
           </p>
           {minInterval < 60 && (
             <p
