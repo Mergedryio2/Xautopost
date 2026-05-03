@@ -12,6 +12,7 @@ from app.api.deps import get_current_operator
 from app.core.crypto import get_crypto
 from app.db.database import get_db
 from app.db.models import Operator, Prompt, Proxy, XAccount
+from app.services.media import resolve_media_ids
 from app.services.playwright_login import login_manager
 from app.services.poster import post_tweet
 from app.services.scheduler import is_posting, scheduler
@@ -30,8 +31,8 @@ class XAccountOut(BaseModel):
     proxy_id: int | None
     default_prompt_id: int | None
     posting_enabled: bool
-    min_interval_minutes: int
-    max_interval_minutes: int
+    min_interval_seconds: int
+    max_interval_seconds: int
     active_hours_start: int
     active_hours_end: int
     last_post_at: datetime | None
@@ -49,9 +50,11 @@ def _enrich(acc: XAccount) -> XAccountOut:
 class XAccountUpdate(BaseModel):
     default_prompt_id: int | None = None
     posting_enabled: bool | None = None
-    daily_limit: int | None = Field(default=None, ge=1, le=100)
-    min_interval_minutes: int | None = Field(default=None, ge=5, le=1440)
-    max_interval_minutes: int | None = Field(default=None, ge=5, le=1440)
+    # 0 = unlimited; otherwise a daily ceiling.
+    daily_limit: int | None = Field(default=None, ge=0, le=100000)
+    # Per-account spacing in seconds. 5s floor matches the UI; 86400s = 24h cap.
+    min_interval_seconds: int | None = Field(default=None, ge=5, le=86400)
+    max_interval_seconds: int | None = Field(default=None, ge=5, le=86400)
     active_hours_start: int | None = Field(default=None, ge=0, le=23)
     active_hours_end: int | None = Field(default=None, ge=0, le=23)
     proxy_id: int | None = None
@@ -95,8 +98,8 @@ def update_account(
         if proxy is None or proxy.operator_id != op.id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "proxy not found")
 
-    new_min = data.get("min_interval_minutes", acc.min_interval_minutes)
-    new_max = data.get("max_interval_minutes", acc.max_interval_minutes)
+    new_min = data.get("min_interval_seconds", acc.min_interval_seconds)
+    new_max = data.get("max_interval_seconds", acc.max_interval_seconds)
     if new_min > new_max:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "min interval ต้อง ≤ max interval"
@@ -201,7 +204,9 @@ async def cancel_login(
 
 
 class TestPostIn(BaseModel):
-    content: str = Field(min_length=1, max_length=4000)
+    # Allow blank text when media is attached — X accepts media-only posts.
+    content: str = Field(default="", max_length=4000)
+    media_ids: list[int] = Field(default_factory=list)
 
 
 class TestPostOut(BaseModel):
@@ -220,5 +225,17 @@ async def test_post_account(
     if acc is None or acc.operator_id != op.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
 
-    result = await post_tweet(account_id=account_id, content=payload.content)
+    if not payload.content.strip() and not payload.media_ids:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "ต้องมีข้อความหรือไฟล์แนบอย่างน้อยหนึ่งอย่าง",
+        )
+
+    media_paths = resolve_media_ids(db, op.id, payload.media_ids) or None
+
+    result = await post_tweet(
+        account_id=account_id,
+        content=payload.content,
+        media_paths=media_paths,
+    )
     return TestPostOut(ok=result.ok, error=result.error)

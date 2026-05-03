@@ -4,6 +4,7 @@ import asyncio
 import logging
 import random
 from datetime import datetime
+from pathlib import Path
 
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -14,7 +15,8 @@ from app.db.database import SessionLocal
 from app.db.models import ApiKey, Operator, PostLog, Prompt, XAccount
 from app.db.utils import now_local, utcnow
 from app.services.ai import generate_content
-from app.services.manual import decorate, split_manual
+from app.services.manual import apply_decoration, split_manual
+from app.services.media import extract_media_tokens, resolve_media_ids
 from app.services.poster import post_tweet
 
 log = logging.getLogger(__name__)
@@ -168,34 +170,34 @@ class RotationScheduler:
                     continue
 
                 # Operational gate 2: per-account min/max interval — silent skip.
-                # Pick a random target in [min, max] minutes; the same account
+                # Pick a random target in [min, max] seconds; the same account
                 # cannot post again until that much time has passed since
                 # last_post_at. This is the human-like cadence guarantee.
                 if acc.last_post_at is not None:
-                    target_minutes = random.uniform(
-                        acc.min_interval_minutes, acc.max_interval_minutes
+                    target_seconds = random.uniform(
+                        acc.min_interval_seconds, acc.max_interval_seconds
                     )
-                    elapsed_minutes = (
-                        now - acc.last_post_at
-                    ).total_seconds() / 60.0
-                    if elapsed_minutes < target_minutes:
+                    elapsed_seconds = (now - acc.last_post_at).total_seconds()
+                    if elapsed_seconds < target_seconds:
                         continue
 
-                # Operational gate 3: daily limit — silent skip
-                count = (
-                    db.scalar(
-                        select(func.count())
-                        .select_from(PostLog)
-                        .where(
-                            PostLog.x_account_id == acc.id,
-                            PostLog.status == "success",
-                            PostLog.timestamp >= today_start,
+                # Operational gate 3: daily limit — silent skip.
+                # daily_limit == 0 means unlimited; skip the count query entirely.
+                if acc.daily_limit > 0:
+                    count = (
+                        db.scalar(
+                            select(func.count())
+                            .select_from(PostLog)
+                            .where(
+                                PostLog.x_account_id == acc.id,
+                                PostLog.status == "success",
+                                PostLog.timestamp >= today_start,
+                            )
                         )
+                        or 0
                     )
-                    or 0
-                )
-                if count >= acc.daily_limit:
-                    continue
+                    if count >= acc.daily_limit:
+                        continue
 
                 # Configuration gate: missing prompt — loud skip
                 if not acc.default_prompt_id:
@@ -220,10 +222,17 @@ class RotationScheduler:
                 return
 
             account_id = chosen.id
+            operator_id = chosen.operator_id
             mode = prompt.mode
             body = prompt.body
             fallback = prompt.fallback_text
-            vary_decoration = prompt.vary_decoration
+            decorate_emoji = prompt.decorate_emoji
+            decorate_letters = prompt.decorate_letters
+
+            # Media is only meaningful for manual prompts (AI ones generate
+            # text on each tick, so there's no candidate to attach files to).
+            # Resolved here while we still hold the session.
+            media_paths: list[Path] = []
 
             if mode == "manual":
                 provider = "manual"
@@ -254,9 +263,19 @@ class RotationScheduler:
                     "สไตล์เขียนเองยังไม่มีข้อความ · แก้ไขสไตล์แล้วใส่ข้อความก่อน",
                 )
                 return
-            content = random.choice(candidates)
-            if vary_decoration:
-                content = decorate(content, account_id=account_id)
+            picked = random.choice(candidates)
+            content, media_ids = extract_media_tokens(picked)
+            content = apply_decoration(
+                content,
+                with_emoji=decorate_emoji,
+                with_letters=decorate_letters,
+                account_id=account_id,
+            )
+            if media_ids:
+                with SessionLocal() as media_db:
+                    media_paths = resolve_media_ids(
+                        media_db, operator_id, media_ids
+                    )
         else:
             try:
                 content = await generate_content(
@@ -286,7 +305,10 @@ class RotationScheduler:
         try:
             async with _post_lock:
                 await post_tweet(
-                    account_id=account_id, content=content, headless=False
+                    account_id=account_id,
+                    content=content,
+                    media_paths=media_paths or None,
+                    headless=False,
                 )
         finally:
             _currently_posting.discard(account_id)

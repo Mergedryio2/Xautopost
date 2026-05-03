@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 import re
+import string
 from collections import deque
 
 # Posts in a manual prompt are separated by a line that contains only "---"
@@ -41,15 +42,7 @@ _RECENT_HISTORY = 12
 _RECENT_EMOJIS: dict[int, deque[str]] = {}
 
 
-def decorate(text: str, account_id: int | None = None) -> str:
-    """Append a random decorative emoji so the post isn't an exact duplicate
-    of a previous identical text. When account_id is given, the emoji is
-    drawn from the pool minus the last 12 emojis used on that account, so
-    repeats are spread across at least 13 picks before recycling — well
-    outside X's duplicate-content detection window for typical post rates."""
-    if not text:
-        return text
-
+def _pick_emoji(account_id: int | None) -> str:
     excluded: set[str] = set()
     if account_id is not None:
         recent = _RECENT_EMOJIS.get(account_id)
@@ -58,9 +51,6 @@ def decorate(text: str, account_id: int | None = None) -> str:
 
     pool = [e for e in EMOJI_POOL if e not in excluded]
     if not pool:
-        # Defensive: if the exclusion set somehow covered the whole pool
-        # (won't happen with 38 emojis vs 12 history slots, but cheap to
-        # guard). Fall back to the full pool.
         pool = list(EMOJI_POOL)
 
     emoji = random.choice(pool)
@@ -71,4 +61,36 @@ def decorate(text: str, account_id: int | None = None) -> str:
         )
         ring.append(emoji)
 
-    return f"{text.rstrip()} {emoji}"
+    return emoji
+
+
+# 26**4 ≈ 457k combinations — collision probability is negligible at any
+# realistic post rate, so no recency window is needed.
+_LETTER_LEN = 4
+
+
+def _pick_letters() -> str:
+    return "".join(random.choices(string.ascii_uppercase, k=_LETTER_LEN))
+
+
+def apply_decoration(
+    text: str,
+    *,
+    with_emoji: bool,
+    with_letters: bool,
+    account_id: int | None = None,
+) -> str:
+    """Append decorations so the post isn't an exact duplicate of previous
+    identical text. Letters are appended first, then the emoji, so the
+    emoji stays at the visual tail when both are enabled."""
+    if not text:
+        return text
+    if not with_emoji and not with_letters:
+        return text
+
+    parts: list[str] = [text.rstrip()]
+    if with_letters:
+        parts.append(_pick_letters())
+    if with_emoji:
+        parts.append(_pick_emoji(account_id))
+    return " ".join(parts)

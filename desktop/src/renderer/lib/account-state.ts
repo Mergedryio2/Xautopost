@@ -59,6 +59,12 @@ function formatRelMinutes(minutes: number): string {
   return `${h} ชม. ${m} น.`
 }
 
+function formatRelSeconds(seconds: number): string {
+  if (seconds < 1) return 'อีกแป๊บ'
+  if (seconds < 60) return `${Math.ceil(seconds)} วินาที`
+  return formatRelMinutes(seconds / 60)
+}
+
 export function todayPostCount(
   acc: XAccountOut,
   logs: PostLogOut[],
@@ -111,7 +117,8 @@ export function deriveAccountState(
   }
 
   const todayCount = todayPostCount(acc, logs, now)
-  if (todayCount >= acc.daily_limit) {
+  // daily_limit === 0 means unlimited; never trip the limit-reached state.
+  if (acc.daily_limit > 0 && todayCount >= acc.daily_limit) {
     return {
       kind: 'limit_reached',
       label: `ครบโควต้าวันนี้แล้ว (${todayCount}/${acc.daily_limit}) · เริ่มใหม่พรุ่งนี้`,
@@ -132,27 +139,30 @@ export function deriveAccountState(
 
   if (acc.last_post_at) {
     const lastMs = parseBkk(acc.last_post_at).getTime()
-    const elapsedMin = (now.getTime() - lastMs) / 60_000
-    if (elapsedMin < acc.min_interval_minutes) {
-      const minRemaining = acc.min_interval_minutes - elapsedMin
-      const maxRemaining = acc.max_interval_minutes - elapsedMin
+    const elapsedSec = (now.getTime() - lastMs) / 1_000
+    if (elapsedSec < acc.min_interval_seconds) {
+      const minRemainingSec = acc.min_interval_seconds - elapsedSec
+      const maxRemainingSec = acc.max_interval_seconds - elapsedSec
       return {
         kind: 'waiting_interval',
         label:
-          maxRemaining > minRemaining + 0.5
-            ? `รออีก ${formatRelMinutes(minRemaining)} – ${formatRelMinutes(maxRemaining)}`
-            : `รออีก ~${formatRelMinutes(minRemaining)}`,
+          maxRemainingSec > minRemainingSec + 30
+            ? `รออีก ${formatRelSeconds(minRemainingSec)} – ${formatRelSeconds(maxRemainingSec)}`
+            : `รออีก ~${formatRelSeconds(minRemainingSec)}`,
         tone: 'wait',
         // Closer to ready = lower priority value = appears earlier.
         // 200 base + remaining-minutes keeps the spread bounded.
-        priority: 200 + minRemaining,
+        priority: 200 + minRemainingSec / 60,
       }
     }
   }
 
   return {
     kind: 'ready',
-    label: `พร้อมโพสต์ทุกเมื่อ · ${todayCount}/${acc.daily_limit} วันนี้`,
+    label:
+      acc.daily_limit === 0
+        ? `พร้อมโพสต์ทุกเมื่อ · วันนี้ ${todayCount} โพสต์`
+        : `พร้อมโพสต์ทุกเมื่อ · ${todayCount}/${acc.daily_limit} วันนี้`,
     tone: 'ok',
     priority: 100,
   }

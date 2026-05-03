@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
+import { MediaPicker } from './MediaPicker'
 import { Modal } from './Modal'
-import { api, type PromptOut, type XAccountOut } from '../lib/api'
+import {
+  api,
+  type MediaAssetOut,
+  type PromptOut,
+  type XAccountOut,
+} from '../lib/api'
 
 type Phase = 'compose' | 'posting' | 'done'
 
@@ -30,6 +36,8 @@ export function TestPostModal({
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [results, setResults] = useState<Record<number, AccountResult>>({})
+  const [mediaAttached, setMediaAttached] = useState<MediaAssetOut[]>([])
+  const [mediaPickerOpen, setMediaPickerOpen] = useState(false)
   const stopRef = useRef(false)
 
   useEffect(() => {
@@ -67,6 +75,23 @@ export function TestPostModal({
     try {
       const r = await api.generatePrompt(promptId)
       setContent(r.text)
+      // Pre-attach the media that the manual candidate referenced so the
+      // user sees what the scheduler would actually post. They can still
+      // remove or add files before sending.
+      if (r.media_ids.length > 0) {
+        try {
+          const all = await api.listMedia()
+          const byId = new Map(all.map((m) => [m.id, m]))
+          const picked = r.media_ids
+            .map((id) => byId.get(id))
+            .filter((m): m is MediaAssetOut => m !== undefined)
+          setMediaAttached(picked)
+        } catch {
+          // Listing media is a nice-to-have here — don't block generate.
+        }
+      } else {
+        setMediaAttached([])
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -74,9 +99,33 @@ export function TestPostModal({
     }
   }
 
+  async function onAddMedia(ids: number[]) {
+    if (ids.length === 0) return
+    try {
+      const all = await api.listMedia()
+      const byId = new Map(all.map((m) => [m.id, m]))
+      const fresh = ids
+        .map((id) => byId.get(id))
+        .filter((m): m is MediaAssetOut => m !== undefined)
+      setMediaAttached((prev) => {
+        // Dedupe — picking the same file twice from the picker shouldn't add
+        // it twice (the user can do it via the prompt body if they want, but
+        // not by clicking the same card here).
+        const seen = new Set(prev.map((m) => m.id))
+        return [...prev, ...fresh.filter((m) => !seen.has(m.id))]
+      })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  function onRemoveMedia(id: number) {
+    setMediaAttached((prev) => prev.filter((m) => m.id !== id))
+  }
+
   async function onPost() {
-    if (!content.trim()) {
-      setError('กรุณากรอกข้อความก่อน')
+    if (!content.trim() && mediaAttached.length === 0) {
+      setError('กรุณากรอกข้อความหรือแนบไฟล์อย่างน้อยหนึ่งอย่าง')
       return
     }
     if (selectedIds.size === 0) {
@@ -93,11 +142,12 @@ export function TestPostModal({
     for (const acc of targets) initial[acc.id] = { kind: 'pending' }
     setResults(initial)
 
+    const mediaIds = mediaAttached.map((m) => m.id)
     for (const acc of targets) {
       if (stopRef.current) break
       setResults((prev) => ({ ...prev, [acc.id]: { kind: 'posting' } }))
       try {
-        const r = await api.testPost(acc.id, content)
+        const r = await api.testPost(acc.id, content, mediaIds)
         setResults((prev) => ({
           ...prev,
           [acc.id]: r.ok
@@ -253,6 +303,52 @@ export function TestPostModal({
             </div>
           </label>
 
+          <div className="field">
+            <span className="field-label-plain">
+              ไฟล์แนบ ({mediaAttached.length})
+            </span>
+            <div
+              className="form-actions"
+              style={{ justifyContent: 'flex-start' }}
+            >
+              <button
+                type="button"
+                className="btn-ghost btn-sm"
+                onClick={() => setMediaPickerOpen(true)}
+              >
+                📎 เลือกจากคลังไฟล์
+              </button>
+              <span className="muted-note">
+                สูงสุด 4 รูป หรือ 1 วิดิโอต่อโพสต์ · X จะปฏิเสธถ้าผสมรูปกับวิดิโอ
+              </span>
+            </div>
+            {mediaAttached.length > 0 && (
+              <div className="attached-media-list">
+                {mediaAttached.map((m) => (
+                  <span key={m.id} className="attached-media-chip">
+                    {m.kind === 'video' ? '🎬' : '🖼️'}{' '}
+                    {m.original_name ?? m.filename}
+                    <button
+                      type="button"
+                      className="attached-media-remove"
+                      aria-label={`เอา ${m.original_name ?? m.filename} ออก`}
+                      onClick={() => onRemoveMedia(m.id)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <MediaPicker
+            open={mediaPickerOpen}
+            multi
+            onClose={() => setMediaPickerOpen(false)}
+            onPick={onAddMedia}
+          />
+
           {error && <div className="form-error">{error}</div>}
 
           <div className="form-actions">
@@ -264,7 +360,9 @@ export function TestPostModal({
               className="btn-primary"
               onClick={onPost}
               disabled={
-                !content.trim() || overLimit || selectedIds.size === 0
+                (!content.trim() && mediaAttached.length === 0) ||
+                overLimit ||
+                selectedIds.size === 0
               }
             >
               โพสต์เลย ({selectedIds.size} บัญชี)

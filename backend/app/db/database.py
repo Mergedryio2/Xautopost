@@ -59,16 +59,27 @@ def _migrate_prompts() -> None:
     new_columns: list[tuple[str, str]] = [
         ("mode", "TEXT NOT NULL DEFAULT 'ai'"),
         ("vary_decoration", "BOOLEAN NOT NULL DEFAULT 1"),
+        ("decorate_emoji", "BOOLEAN NOT NULL DEFAULT 1"),
+        ("decorate_letters", "BOOLEAN NOT NULL DEFAULT 0"),
     ]
     with engine.begin() as conn:
         cols = conn.execute(text("PRAGMA table_info(prompts)")).fetchall()
         existing = {row[1] for row in cols}
+        added: set[str] = set()
         for name, ddl in new_columns:
             if name not in existing:
                 conn.execute(
                     text(f"ALTER TABLE prompts ADD COLUMN {name} {ddl}")
                 )
                 log.info("migrated: added column prompts.%s", name)
+                added.add(name)
+        # Backfill: when splitting the boolean `vary_decoration` into two flags,
+        # carry over the old value so users who had it off stay off.
+        if "decorate_emoji" in added and "vary_decoration" in existing:
+            conn.execute(
+                text("UPDATE prompts SET decorate_emoji = vary_decoration")
+            )
+            log.info("migrated: backfilled prompts.decorate_emoji from vary_decoration")
 
 
 def _migrate_operators() -> None:
@@ -97,15 +108,37 @@ def _migrate_x_accounts() -> None:
         ("posting_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
         ("min_interval_minutes", "INTEGER NOT NULL DEFAULT 60"),
         ("max_interval_minutes", "INTEGER NOT NULL DEFAULT 240"),
+        ("min_interval_seconds", "INTEGER NOT NULL DEFAULT 3600"),
+        ("max_interval_seconds", "INTEGER NOT NULL DEFAULT 14400"),
         ("active_hours_start", "INTEGER NOT NULL DEFAULT 9"),
         ("active_hours_end", "INTEGER NOT NULL DEFAULT 22"),
     ]
     with engine.begin() as conn:
         cols = conn.execute(text("PRAGMA table_info(x_accounts)")).fetchall()
         existing = {row[1] for row in cols}
+        added: set[str] = set()
         for name, ddl in new_columns:
             if name not in existing:
                 conn.execute(
                     text(f"ALTER TABLE x_accounts ADD COLUMN {name} {ddl}")
                 )
                 log.info("migrated: added column x_accounts.%s", name)
+                added.add(name)
+        # Backfill: when promoting the interval from minutes to seconds,
+        # multiply the old value so existing accounts keep their cadence.
+        if "min_interval_seconds" in added and "min_interval_minutes" in existing:
+            conn.execute(
+                text(
+                    "UPDATE x_accounts "
+                    "SET min_interval_seconds = min_interval_minutes * 60"
+                )
+            )
+            log.info("migrated: backfilled x_accounts.min_interval_seconds from minutes")
+        if "max_interval_seconds" in added and "max_interval_minutes" in existing:
+            conn.execute(
+                text(
+                    "UPDATE x_accounts "
+                    "SET max_interval_seconds = max_interval_minutes * 60"
+                )
+            )
+            log.info("migrated: backfilled x_accounts.max_interval_seconds from minutes")

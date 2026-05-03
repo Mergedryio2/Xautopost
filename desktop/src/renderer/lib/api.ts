@@ -14,11 +14,12 @@ export type XAccountOut = {
   handle: string
   display_name: string | null
   status: string
+  // 0 = unlimited (no daily ceiling).
   daily_limit: number
   default_prompt_id: number | null
   posting_enabled: boolean
-  min_interval_minutes: number
-  max_interval_minutes: number
+  min_interval_seconds: number
+  max_interval_seconds: number
   active_hours_start: number
   active_hours_end: number
   last_post_at: string | null
@@ -32,8 +33,8 @@ export type XAccountUpdate = Partial<{
   default_prompt_id: number | null
   posting_enabled: boolean
   daily_limit: number
-  min_interval_minutes: number
-  max_interval_minutes: number
+  min_interval_seconds: number
+  max_interval_seconds: number
   active_hours_start: number
   active_hours_end: number
 }>
@@ -73,7 +74,8 @@ export type PromptOut = {
   name: string
   body: string
   mode: PromptMode
-  vary_decoration: boolean
+  decorate_emoji: boolean
+  decorate_letters: boolean
   provider: AiProvider
   model: string
   fallback_text: string | null
@@ -84,6 +86,19 @@ export type GenerateOut = {
   text: string
   provider: string
   model: string
+  media_ids: number[]
+}
+
+export type MediaKind = 'image' | 'video'
+
+export type MediaAssetOut = {
+  id: number
+  filename: string
+  original_name: string | null
+  mime_type: string
+  kind: MediaKind
+  size_bytes: number
+  created_at: string
 }
 
 let baseUrl: string | null = null
@@ -236,10 +251,13 @@ export const api = {
     request<LoginStatusOut>(`/accounts/login/${taskId}`),
   cancelLogin: (taskId: string) =>
     request<{ ok: boolean }>(`/accounts/login/${taskId}`, { method: 'DELETE' }),
-  testPost: (accountId: number, content: string) =>
+  testPost: (accountId: number, content: string, mediaIds: number[] = []) =>
     request<{ ok: boolean; error: string | null }>(
       `/accounts/${accountId}/test-post`,
-      { method: 'POST', body: JSON.stringify({ content }) },
+      {
+        method: 'POST',
+        body: JSON.stringify({ content, media_ids: mediaIds }),
+      },
     ),
 
   listApiKeys: () => request<ApiKeyOut[]>('/api-keys'),
@@ -256,7 +274,8 @@ export const api = {
     name: string
     body: string
     mode?: PromptMode
-    vary_decoration?: boolean
+    decorate_emoji?: boolean
+    decorate_letters?: boolean
     provider?: AiProvider
     model?: string
     fallback_text?: string
@@ -271,7 +290,8 @@ export const api = {
       name: string
       body: string
       mode: PromptMode
-      vary_decoration: boolean
+      decorate_emoji: boolean
+      decorate_letters: boolean
       provider: AiProvider
       model: string
       fallback_text: string | null
@@ -285,6 +305,52 @@ export const api = {
     request<{ ok: boolean }>(`/prompts/${id}`, { method: 'DELETE' }),
   generatePrompt: (id: number) =>
     request<GenerateOut>(`/prompts/${id}/generate`, { method: 'POST' }),
+
+  listMedia: () => request<MediaAssetOut[]>('/media'),
+  uploadMedia: async (file: File): Promise<MediaAssetOut> => {
+    // Don't go through `request` — multipart needs a FormData body and the
+    // browser-set Content-Type with boundary, not application/json.
+    await ensureInit()
+    if (currentOperatorId === null) throw new NotLoggedInError()
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${baseUrl}/media`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-Operator-Id': String(currentOperatorId),
+      },
+      body: form,
+    })
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`
+      try {
+        const body = (await res.json()) as { detail?: string }
+        if (typeof body.detail === 'string') detail = body.detail
+      } catch {
+        // body wasn't JSON — keep the status fallback
+      }
+      throw new Error(detail)
+    }
+    return (await res.json()) as MediaAssetOut
+  },
+  deleteMedia: (id: number) =>
+    request<{ ok: boolean }>(`/media/${id}`, { method: 'DELETE' }),
+  // Returns an object URL for the file, with both auth headers attached.
+  // Caller MUST URL.revokeObjectURL() when done to release the blob.
+  mediaObjectUrl: async (id: number): Promise<string> => {
+    await ensureInit()
+    if (currentOperatorId === null) throw new NotLoggedInError()
+    const res = await fetch(`${baseUrl}/media/${id}/file`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-Operator-Id': String(currentOperatorId),
+      },
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const blob = await res.blob()
+    return URL.createObjectURL(blob)
+  },
 
   listLogs: (params?: {
     account_id?: number

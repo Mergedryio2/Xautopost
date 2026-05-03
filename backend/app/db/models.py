@@ -49,13 +49,18 @@ class XAccount(Base):
         ForeignKey("proxies.id", ondelete="SET NULL"), default=None
     )
     status: Mapped[str] = mapped_column(String(32), default="unverified")
-    daily_limit: Mapped[int] = mapped_column(default=10)
+    # 0 = unlimited (no daily ceiling). Otherwise the scheduler stops posting
+    # for the rest of the day once `count >= daily_limit`.
+    daily_limit: Mapped[int] = mapped_column(default=0)
     default_prompt_id: Mapped[int | None] = mapped_column(
         ForeignKey("prompts.id", ondelete="SET NULL"), default=None
     )
     posting_enabled: Mapped[bool] = mapped_column(default=False)
-    min_interval_minutes: Mapped[int] = mapped_column(default=60)
-    max_interval_minutes: Mapped[int] = mapped_column(default=240)
+    # Per-account spacing in *seconds*. Scheduler picks a uniform random
+    # target in [min, max] and refuses to post the same account again until
+    # that much time has passed since `last_post_at`.
+    min_interval_seconds: Mapped[int] = mapped_column(default=3600)
+    max_interval_seconds: Mapped[int] = mapped_column(default=14400)
     active_hours_start: Mapped[int] = mapped_column(default=9)
     active_hours_end: Mapped[int] = mapped_column(default=22)
     last_post_at: Mapped[datetime | None] = mapped_column(default=None)
@@ -89,13 +94,35 @@ class Prompt(Base):
     # 'manual' = body is the literal post text(s); split by `\n---\n` and the
     # scheduler picks one at random per tick. No AI / API key needed.
     mode: Mapped[str] = mapped_column(String(16), default="ai")
-    # Append a random decorative emoji to each manual post so X doesn't see
-    # the same text twice and reject as duplicate. AI prompts ignore this
-    # (their output is naturally varied).
-    vary_decoration: Mapped[bool] = mapped_column(default=True)
+    # Append decorations to each manual post so X doesn't see the same text
+    # twice and reject as duplicate. AI prompts ignore these (their output is
+    # naturally varied). Both flags can be on at once — letters are appended
+    # first, then the emoji, so the emoji stays at the visual tail.
+    decorate_emoji: Mapped[bool] = mapped_column(default=True)
+    decorate_letters: Mapped[bool] = mapped_column(default=False)
     provider: Mapped[str] = mapped_column(String(32), default="openai")
     model: Mapped[str] = mapped_column(String(64), default="gpt-4o-mini")
     fallback_text: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class MediaAsset(Base):
+    __tablename__ = "media_assets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    operator_id: Mapped[int] = mapped_column(
+        ForeignKey("operators.id", ondelete="CASCADE"), index=True
+    )
+    # Stored on disk under <data_dir>/media/<operator_id>/<filename>. The
+    # filename is a server-generated UUID + extension, so it never reflects
+    # untrusted user input and there's no path-traversal surface.
+    filename: Mapped[str] = mapped_column(String(128))
+    original_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    mime_type: Mapped[str] = mapped_column(String(64))
+    # 'image' or 'video' — used to enforce X's "no mixing" rule and pick the
+    # right wait strategy in the poster (videos take far longer to process).
+    kind: Mapped[str] = mapped_column(String(16))
+    size_bytes: Mapped[int] = mapped_column(default=0)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 

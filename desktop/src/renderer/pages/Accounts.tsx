@@ -6,7 +6,7 @@ import { EmptyState } from '../components/EmptyState'
 import { Modal } from '../components/Modal'
 import { StylePicker } from '../components/StylePicker'
 import { TestPostModal } from '../components/TestPostModal'
-import { formatHour, formatRelative } from '../lib/time'
+import { formatHour, formatRelative, formatSeconds } from '../lib/time'
 import {
   api,
   type LoginTaskStatus,
@@ -200,8 +200,11 @@ export function Accounts() {
                       <strong>กำลังโพสต์อัตโนมัติ</strong> · ระหว่าง{' '}
                       {formatHour(acc.active_hours_start)}–
                       {formatHour(acc.active_hours_end)} ทุก{' '}
-                      {acc.min_interval_minutes}–{acc.max_interval_minutes} นาที
-                      ไม่เกิน {acc.daily_limit} ครั้งต่อวัน
+                      {formatSeconds(acc.min_interval_seconds)}–
+                      {formatSeconds(acc.max_interval_seconds)}
+                      {acc.daily_limit === 0
+                        ? ' · ไม่จำกัดจำนวนต่อวัน'
+                        : ` · ไม่เกิน ${acc.daily_limit} ครั้งต่อวัน`}
                     </span>
                   ) : acc.default_prompt_id === null ? (
                     <span>

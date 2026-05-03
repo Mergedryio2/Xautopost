@@ -6,7 +6,13 @@ import {
   deriveAccountState,
   type AccountState,
 } from '../lib/account-state'
-import { formatHour, formatRelative, formatTimeShort, isToday } from '../lib/time'
+import {
+  formatHour,
+  formatRelative,
+  formatSeconds,
+  formatTimeShort,
+  isToday,
+} from '../lib/time'
 import {
   api,
   type Operator,
@@ -308,7 +314,7 @@ function AccountCard({
       </div>
       <div className="row-meta">
         <span className="muted-note is-inline">
-          ⏱ ทุก {acc.min_interval_minutes}–{acc.max_interval_minutes} นาที
+          ⏱ ทุก {formatSeconds(acc.min_interval_seconds)}–{formatSeconds(acc.max_interval_seconds)}
         </span>
         <span className="muted-note is-inline">
           ☀️ {formatHour(acc.active_hours_start)}–

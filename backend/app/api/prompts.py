@@ -14,7 +14,8 @@ from app.core.crypto import get_crypto
 from app.db.database import get_db
 from app.db.models import ApiKey, Operator, Prompt
 from app.services.ai import generate_content
-from app.services.manual import decorate, split_manual
+from app.services.manual import apply_decoration, split_manual
+from app.services.media import extract_media_tokens
 
 router = APIRouter(prefix="/prompts", tags=["prompts"])
 
@@ -26,7 +27,8 @@ class PromptOut(BaseModel):
     name: str
     body: str
     mode: str
-    vary_decoration: bool
+    decorate_emoji: bool
+    decorate_letters: bool
     provider: str
     model: str
     fallback_text: str | None
@@ -37,7 +39,8 @@ class PromptCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     body: str = Field(min_length=1)
     mode: str = Field(default="ai", pattern=r"^(ai|manual)$")
-    vary_decoration: bool = True
+    decorate_emoji: bool = True
+    decorate_letters: bool = False
     provider: str = Field(default="openai", pattern=r"^(openai|gemini)$")
     model: str = Field(default="gpt-4o-mini", min_length=1, max_length=64)
     fallback_text: str | None = None
@@ -47,7 +50,8 @@ class PromptUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     body: str | None = Field(default=None, min_length=1)
     mode: str | None = Field(default=None, pattern=r"^(ai|manual)$")
-    vary_decoration: bool | None = None
+    decorate_emoji: bool | None = None
+    decorate_letters: bool | None = None
     provider: str | None = Field(default=None, pattern=r"^(openai|gemini)$")
     model: str | None = Field(default=None, min_length=1, max_length=64)
     fallback_text: str | None = None
@@ -57,6 +61,10 @@ class GenerateOut(BaseModel):
     text: str
     provider: str
     model: str
+    # For manual prompts: any [media:N] tokens in the picked candidate are
+    # surfaced here so the test-post UI can show what would be attached.
+    # AI prompts always return [].
+    media_ids: list[int] = []
 
 
 @router.get("", response_model=list[PromptOut])
@@ -84,7 +92,8 @@ def create_prompt(
         name=payload.name,
         body=payload.body,
         mode=payload.mode,
-        vary_decoration=payload.vary_decoration,
+        decorate_emoji=payload.decorate_emoji,
+        decorate_letters=payload.decorate_letters,
         provider=payload.provider,
         model=payload.model,
         fallback_text=payload.fallback_text,
@@ -144,9 +153,15 @@ async def generate_from_prompt(
                 "ยังไม่มีข้อความให้สุ่มเลือก · เปิดแก้ไขสไตล์แล้วใส่ข้อความก่อนนะคะ",
             )
         picked = random.choice(candidates)
-        if p.vary_decoration:
-            picked = decorate(picked)
-        return GenerateOut(text=picked, provider="manual", model="-")
+        text, media_ids = extract_media_tokens(picked)
+        text = apply_decoration(
+            text,
+            with_emoji=p.decorate_emoji,
+            with_letters=p.decorate_letters,
+        )
+        return GenerateOut(
+            text=text, provider="manual", model="-", media_ids=media_ids
+        )
 
     key_row = db.scalar(
         select(ApiKey)

@@ -53,3 +53,17 @@ export function isToday(iso: string): boolean {
 export function formatHour(h: number): string {
   return `${String(h).padStart(2, '0')}:00`
 }
+
+// Render a duration in seconds as a Thai short form ("45 วินาที", "5 นาที",
+// "2 ชม. 30 น.") so the user can sanity-check what they typed in the seconds
+// field of the per-account interval setting.
+export function formatSeconds(s: number): string {
+  if (!Number.isFinite(s) || s <= 0) return '0 วินาที'
+  if (s < 60) return `${Math.round(s)} วินาที`
+  const totalMin = Math.round(s / 60)
+  if (totalMin < 60) return `${totalMin} นาที`
+  const hr = Math.floor(totalMin / 60)
+  const min = totalMin % 60
+  if (min === 0) return `${hr} ชม.`
+  return `${hr} ชม. ${min} น.`
+}

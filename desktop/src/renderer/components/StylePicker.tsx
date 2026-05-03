@@ -1,4 +1,5 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { MediaPicker } from './MediaPicker'
 import { Modal } from './Modal'
 import {
   api,
@@ -331,14 +332,46 @@ function PromptForm({
         : DEFAULT_GEMINI_MODEL),
   )
   const [fallback, setFallback] = useState(existing?.fallback_text ?? '')
-  const [varyDecoration, setVaryDecoration] = useState(
-    existing?.vary_decoration ?? true,
+  const [decorateEmoji, setDecorateEmoji] = useState(
+    existing?.decorate_emoji ?? true,
+  )
+  const [decorateLetters, setDecorateLetters] = useState(
+    existing?.decorate_letters ?? false,
   )
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [mediaPickerOpen, setMediaPickerOpen] = useState(false)
+  const bodyRef = useRef<HTMLTextAreaElement>(null)
+
+  function insertMediaTokens(ids: number[]) {
+    if (ids.length === 0) return
+    const tokens = ids.map((id) => `[media:${id}]`).join(' ')
+    const ta = bodyRef.current
+    if (!ta) {
+      // Fallback: append at the end with a leading newline so the token sits
+      // at the top of a new candidate block instead of mid-sentence.
+      setBody((prev) => (prev ? `${prev}\n${tokens}\n` : `${tokens}\n`))
+      return
+    }
+    const start = ta.selectionStart
+    const end = ta.selectionEnd
+    const before = body.slice(0, start)
+    const after = body.slice(end)
+    // Tokens read most cleanly on their own line. Pad with newlines if the
+    // surrounding text isn't already at a line boundary.
+    const padBefore = before && !before.endsWith('\n') ? '\n' : ''
+    const padAfter = after && !after.startsWith('\n') ? '\n' : ''
+    const next = `${before}${padBefore}${tokens}${padAfter}${after}`
+    setBody(next)
+    requestAnimationFrame(() => {
+      ta.focus()
+      const cursor = (before + padBefore + tokens).length
+      ta.setSelectionRange(cursor, cursor)
+    })
+  }
 
   async function handleDelete() {
     if (!existing) return
@@ -380,7 +413,8 @@ function PromptForm({
         name: name.trim(),
         body: body.trim(),
         mode: promptMode,
-        vary_decoration: varyDecoration,
+        decorate_emoji: decorateEmoji,
+        decorate_letters: decorateLetters,
         provider,
         model,
         fallback_text:
@@ -502,34 +536,73 @@ function PromptForm({
             ข้อความที่จะโพสต์ ({candidates.length} ข้อความ)
           </span>
           <textarea
+            ref={bodyRef}
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={10}
             placeholder={`สวัสดีตอนเช้าค่ะ ขอให้วันนี้เป็นวันที่ดี\n---\nเช้านี้กาแฟแก้วโปรดต้องมา\n---\nวันใหม่ ลองอะไรใหม่ๆ ดูบ้าง`}
             style={{ fontFamily: 'var(--font)', lineHeight: 1.6 }}
           />
-        </label>
-
-        <label className="toggle-row">
-          <span>
-            <strong>🎲 ใส่อิโมจิสุ่มท้ายแต่ละโพสต์อัตโนมัติ</strong>
-            <span className="muted-note" style={{ display: 'block', margin: '4px 0 0' }}>
-              กัน X มองว่าซ้ำ · ระบบจะหยิบจาก pool {38} ตัว{' '}
-              {varyDecoration && (
-                <>
-                  · ตัวอย่าง: "<span style={{ color: 'var(--text)' }}>{previewBase} ✨</span>"
-                </>
-              )}
+          <div
+            className="form-actions"
+            style={{ marginTop: 6, justifyContent: 'flex-start' }}
+          >
+            <button
+              type="button"
+              className="btn-ghost btn-sm"
+              onClick={() => setMediaPickerOpen(true)}
+            >
+              📎 แนบรูป/วิดิโอ
+            </button>
+            <span className="muted-note">
+              จะแทรก <code style={{ background: 'var(--primary-soft)', padding: '1px 6px', borderRadius: 4, fontFamily: 'var(--font-mono)' }}>[media:N]</code> ตรงตำแหน่งเคอร์เซอร์ · วางในข้อความที่อยากให้แนบ
             </span>
-          </span>
-          <input
-            type="checkbox"
-            checked={varyDecoration}
-            onChange={(e) => setVaryDecoration(e.target.checked)}
-          />
+          </div>
         </label>
 
-        {!varyDecoration && (
+        <MediaPicker
+          open={mediaPickerOpen}
+          multi
+          onClose={() => setMediaPickerOpen(false)}
+          onPick={insertMediaTokens}
+        />
+
+        <div className="field">
+          <span className="field-label-plain">ตกแต่งท้ายโพสต์อัตโนมัติ (กัน X มองว่าซ้ำ)</span>
+          <label className="toggle-row">
+            <span>
+              <strong>🎲 อิโมจิสุ่ม</strong>
+              <span className="muted-note" style={{ display: 'block', margin: '4px 0 0' }}>
+                หยิบจาก pool {38} ตัว · ตัวอย่าง: "<span style={{ color: 'var(--text)' }}>{previewBase} ✨</span>"
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              checked={decorateEmoji}
+              onChange={(e) => setDecorateEmoji(e.target.checked)}
+            />
+          </label>
+          <label className="toggle-row" style={{ marginTop: 8 }}>
+            <span>
+              <strong>🔤 ตัวอักษร A–Z สุ่ม 4 ตัว</strong>
+              <span className="muted-note" style={{ display: 'block', margin: '4px 0 0' }}>
+                26⁴ ≈ 4 แสนความเป็นไปได้ · ตัวอย่าง: "<span style={{ color: 'var(--text)' }}>{previewBase} QXMP</span>"
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              checked={decorateLetters}
+              onChange={(e) => setDecorateLetters(e.target.checked)}
+            />
+          </label>
+          {decorateEmoji && decorateLetters && (
+            <p className="muted-note" style={{ margin: '6px 0 0' }}>
+              เปิดทั้งสองอย่าง · ตัวอย่าง: "<span style={{ color: 'var(--text)' }}>{previewBase} QXMP ✨</span>"
+            </p>
+          )}
+        </div>
+
+        {!decorateEmoji && !decorateLetters && (
           <div
             className="helper-callout"
             style={{
@@ -540,7 +613,7 @@ function PromptForm({
           >
             <span style={{ fontSize: 22, lineHeight: 1 }}>⚠️</span>
             <span>
-              ปิดอิโมจิสุ่มแล้ว · ถ้าข้อความน้อยจะถูกหยิบซ้ำและ X จะ reject
+              ปิดทั้งอิโมจิและตัวอักษรสุ่มแล้ว · ถ้าข้อความน้อยจะถูกหยิบซ้ำและ X จะ reject
               ข้อความเดิมในรอบ 24 ชม. แนะนำใส่อย่างน้อย{' '}
               <strong>{Math.max(10, candidates.length + 1)} ข้อความ</strong> ที่ต่างกัน
             </span>

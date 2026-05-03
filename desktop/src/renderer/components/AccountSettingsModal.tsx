@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Modal } from './Modal'
 import { api, type PromptOut, type XAccountOut } from '../lib/api'
-import { formatHour } from '../lib/time'
+import { formatHour, formatSeconds } from '../lib/time'
 
 const HOURS: number[] = Array.from({ length: 24 }, (_, i) => i)
 
@@ -21,11 +21,16 @@ export function AccountSettingsModal({
   onClose: () => void
 }) {
   const [prompts, setPrompts] = useState<PromptOut[]>([])
-  const [dailyLimit, setDailyLimit] = useState(account.daily_limit)
+  // 0 in DB = unlimited. Track the checkbox state separately so the user can
+  // toggle back to a number without losing the value they had typed.
+  const [dailyLimit, setDailyLimit] = useState(
+    account.daily_limit === 0 ? 10 : account.daily_limit,
+  )
+  const [unlimitedDaily, setUnlimitedDaily] = useState(account.daily_limit === 0)
   const [hourStart, setHourStart] = useState(account.active_hours_start)
   const [hourEnd, setHourEnd] = useState(account.active_hours_end)
-  const [minInterval, setMinInterval] = useState(account.min_interval_minutes)
-  const [maxInterval, setMaxInterval] = useState(account.max_interval_minutes)
+  const [minInterval, setMinInterval] = useState(account.min_interval_seconds)
+  const [maxInterval, setMaxInterval] = useState(account.max_interval_seconds)
   const matchedTime = TIME_PRESETS.find(
     (p) => p.start === hourStart && p.end === hourEnd,
   )
@@ -50,21 +55,25 @@ export function AccountSettingsModal({
     e.preventDefault()
     setError(null)
     if (minInterval < 5 || maxInterval < 5) {
-      setError('ช่วงห่างต่ำสุดและสูงสุดต้องไม่น้อยกว่า 5 นาที')
+      setError('ช่วงห่างต่ำสุดและสูงสุดต้องไม่น้อยกว่า 5 วินาที')
       return
     }
     if (minInterval > maxInterval) {
       setError('ช่วงห่างต่ำสุดต้องน้อยกว่าหรือเท่ากับสูงสุด')
       return
     }
+    if (!unlimitedDaily && dailyLimit < 1) {
+      setError('โพสต์ต่อวันต้องอย่างน้อย 1 ครั้ง หรือเลือก "ไม่จำกัด"')
+      return
+    }
     setSubmitting(true)
     try {
       await api.updateAccount(account.id, {
-        daily_limit: dailyLimit,
+        daily_limit: unlimitedDaily ? 0 : dailyLimit,
         active_hours_start: hourStart,
         active_hours_end: hourEnd,
-        min_interval_minutes: minInterval,
-        max_interval_minutes: maxInterval,
+        min_interval_seconds: minInterval,
+        max_interval_seconds: maxInterval,
       })
       onClose()
     } catch (e) {
@@ -184,48 +193,83 @@ export function AccountSettingsModal({
           )}
         </div>
 
-        <label className="field">
+        <div className="field">
           <span className="field-label-plain">โพสต์ได้สูงสุดต่อวัน</span>
-          <input
-            type="number"
-            min={1}
-            max={100}
-            value={dailyLimit}
-            onChange={(e) => setDailyLimit(Number(e.target.value))}
-          />
-        </label>
+          <label
+            className="toggle-row"
+            style={{ marginBottom: 8, padding: '8px 12px' }}
+          >
+            <span>
+              <strong>ไม่จำกัด</strong>
+              <span
+                className="muted-note"
+                style={{ display: 'block', margin: '4px 0 0' }}
+              >
+                โพสต์ได้เรื่อยๆ จนกว่าจะถึงเวลานอกช่วง
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              checked={unlimitedDaily}
+              onChange={(e) => setUnlimitedDaily(e.target.checked)}
+            />
+          </label>
+          {!unlimitedDaily && (
+            <input
+              type="number"
+              min={1}
+              max={100000}
+              value={dailyLimit}
+              onChange={(e) => setDailyLimit(Number(e.target.value))}
+            />
+          )}
+        </div>
 
         <div className="field">
           <span className="field-label-plain">เว้นช่วงระหว่างโพสต์ของบัญชีนี้</span>
           <div className="field-row">
             <label className="field">
               <span style={{ textTransform: 'none', letterSpacing: 0 }}>
-                ต่ำสุด (นาที)
+                ต่ำสุด (วินาที)
               </span>
               <input
                 type="number"
                 min={5}
-                max={1440}
+                max={86400}
                 value={minInterval}
                 onChange={(e) => setMinInterval(Number(e.target.value))}
               />
+              <span className="muted-note" style={{ marginTop: 4 }}>
+                = {formatSeconds(minInterval)}
+              </span>
             </label>
             <label className="field">
               <span style={{ textTransform: 'none', letterSpacing: 0 }}>
-                สูงสุด (นาที)
+                สูงสุด (วินาที)
               </span>
               <input
                 type="number"
                 min={5}
-                max={1440}
+                max={86400}
                 value={maxInterval}
                 onChange={(e) => setMaxInterval(Number(e.target.value))}
               />
+              <span className="muted-note" style={{ marginTop: 4 }}>
+                = {formatSeconds(maxInterval)}
+              </span>
             </label>
           </div>
           <p className="muted-note" style={{ margin: '4px 0 0' }}>
-            ระบบจะสุ่มเวลาในช่วงนี้ทุกครั้ง เพื่อให้ดูเป็นธรรมชาติ · ต่ำสุด 5 นาที (กันโดน X ตรวจจับว่าเป็น bot)
+            ระบบจะสุ่มเวลาในช่วงนี้ทุกครั้ง เพื่อให้ดูเป็นธรรมชาติ · ต่ำสุด 5 วินาที
           </p>
+          {minInterval < 60 && (
+            <p
+              className="muted-note"
+              style={{ margin: '4px 0 0', color: 'var(--warn-fg)' }}
+            >
+              ⚠️ ต่ำกว่า 1 นาทีอาจเสี่ยงโดน X ตรวจจับว่าเป็น bot
+            </p>
+          )}
         </div>
 
         {error && <div className="form-error">{error}</div>}
