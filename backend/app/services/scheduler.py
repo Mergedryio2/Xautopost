@@ -42,6 +42,74 @@ _in_flight_by_operator: dict[int, int] = {}
 # anti-spam looks for.
 _proxy_in_use: set[int] = set()
 
+# Per-operator window slot tracker for the parallel tile layout. Slot
+# index i (0-based) maps to a fixed (x, y, w, h) on screen via
+# _slot_position(i, cap), so concurrent Chromium windows land in a
+# deterministic grid instead of stacking at the OS default.
+_busy_slots_by_operator: dict[int, set[int]] = {}
+
+# Tile layout assumes a 1920×1080 desktop with 40px reserved for the OS
+# bar (taskbar/menubar). Larger monitors leave the windows clustered in
+# the upper-left quadrant; smaller monitors (1366×768) may overflow the
+# right/bottom edge by a few hundred px — acceptable for the common
+# laptop case, and the user can drag the offending window if needed.
+_SCREEN_W = 1920
+_SCREEN_H_USABLE = 1040
+_TILE_MARGIN = 20
+
+
+def _slot_position(slot_idx: int, total_slots: int) -> tuple[int, int, int, int]:
+    """Return (x, y, w, h) for a window in a deterministic tile grid.
+    Single-window layout centers in the screen with a generous size;
+    multi-window layouts pick a column/row count tuned so each cell stays
+    above ~600px wide (the practical minimum for X's composer)."""
+    if total_slots <= 1:
+        w, h = 900, 700
+        x = (_SCREEN_W - w) // 2
+        y = (_SCREEN_H_USABLE - h) // 2
+        return (x, y, w, h)
+
+    if total_slots == 2:
+        cols, rows = 2, 1
+    elif total_slots == 3:
+        cols, rows = 3, 1
+    elif total_slots == 4:
+        cols, rows = 2, 2
+    else:  # 5 or 6 — both use a 3x2 grid; cap=5 just leaves slot index 5 unused
+        cols, rows = 3, 2
+
+    cell_w = (_SCREEN_W - _TILE_MARGIN * (cols + 1)) // cols
+    cell_h = (_SCREEN_H_USABLE - _TILE_MARGIN * (rows + 1)) // rows
+
+    col = slot_idx % cols
+    row = slot_idx // cols
+    x = _TILE_MARGIN + col * (cell_w + _TILE_MARGIN)
+    y = _TILE_MARGIN + row * (cell_h + _TILE_MARGIN)
+    return (x, y, cell_w, cell_h)
+
+
+def _acquire_slot(operator_id: int, cap: int) -> int:
+    """Reserve and return the lowest-index free slot in [0, cap) for this
+    operator. Caller must release with _release_slot when the post ends."""
+    busy = _busy_slots_by_operator.setdefault(operator_id, set())
+    for i in range(cap):
+        if i not in busy:
+            busy.add(i)
+            return i
+    # Defensive: shouldn't happen because the tick only spawns up to (cap
+    # - in_flight) jobs, but if the count drifts somehow, fall back to
+    # slot 0 so the post still fires (it just won't tile uniquely).
+    return 0
+
+
+def _release_slot(operator_id: int, slot_idx: int) -> None:
+    busy = _busy_slots_by_operator.get(operator_id)
+    if busy is None:
+        return
+    busy.discard(slot_idx)
+    if not busy:
+        _busy_slots_by_operator.pop(operator_id, None)
+
 
 def is_posting(account_id: int) -> bool:
     """True while the scheduler has Playwright actively driving X for this
@@ -267,20 +335,31 @@ class RotationScheduler:
             # Reserve slots SYNCHRONOUSLY (no await between mark and spawn)
             # so a fast subsequent tick can't double-pick or exceed the cap.
             # asyncio is single-threaded, so this block of mutations is
-            # atomic w.r.t. the next coroutine point.
-            for account_id, op_id, proxy_id, _ in chosen_jobs:
+            # atomic w.r.t. the next coroutine point. Each job also gets a
+            # window-tile slot index so concurrent Chromiums land in a
+            # deterministic grid instead of stacking randomly.
+            jobs_with_slots: list[
+                tuple[int, int, int | None, int, int, int]
+            ] = []
+            for account_id, op_id, proxy_id, prompt_id in chosen_jobs:
                 _currently_posting.add(account_id)
                 _in_flight_by_operator[op_id] = (
                     _in_flight_by_operator.get(op_id, 0) + 1
                 )
                 if proxy_id is not None:
                     _proxy_in_use.add(proxy_id)
+                slot_idx = _acquire_slot(op_id, cap)
+                jobs_with_slots.append(
+                    (account_id, op_id, proxy_id, prompt_id, slot_idx, cap)
+                )
 
         # Spawn each post as an independent task. The tick returns
         # immediately; the next interval tops up free slots.
-        for account_id, op_id, proxy_id, prompt_id in chosen_jobs:
+        for account_id, op_id, proxy_id, prompt_id, slot_idx, total in jobs_with_slots:
             asyncio.create_task(
-                self._do_post(account_id, op_id, proxy_id, prompt_id)
+                self._do_post(
+                    account_id, op_id, proxy_id, prompt_id, slot_idx, total
+                )
             )
 
     async def _do_post(
@@ -289,6 +368,8 @@ class RotationScheduler:
         operator_id: int,
         proxy_id: int | None,
         prompt_id: int,
+        slot_idx: int,
+        total_slots: int,
     ) -> None:
         """Build content for one chosen account and drive the Playwright
         post. Wrapped in try/finally so the in-flight bookkeeping is
@@ -375,11 +456,16 @@ class RotationScheduler:
             # Playwright opens its own visible Chromium per task. Multiple
             # tasks run concurrently up to the operator's parallel_posts
             # cap (enforced at tick time). Per-proxy serial posting is
-            # enforced via the _proxy_in_use guard at tick time too.
+            # enforced via the _proxy_in_use guard at tick time too. The
+            # tile slot pins the window to a fixed (x, y, w, h) so the
+            # parallel windows land in a deterministic grid.
+            x, y, w, h = _slot_position(slot_idx, total_slots)
             await post_tweet(
                 account_id=account_id,
                 content=content,
                 media_paths=media_paths or None,
+                window_position=(x, y),
+                window_size=(w, h),
                 headless=False,
             )
         except Exception:  # noqa: BLE001
@@ -393,6 +479,7 @@ class RotationScheduler:
                 _in_flight_by_operator[operator_id] = remaining
             if proxy_id is not None:
                 _proxy_in_use.discard(proxy_id)
+            _release_slot(operator_id, slot_idx)
 
 
 def _in_active_window(now: datetime, start: int, end: int) -> bool:

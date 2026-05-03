@@ -37,11 +37,16 @@ async def post_tweet(
     account_id: int,
     content: str,
     media_paths: list[Path] | None = None,
+    window_position: tuple[int, int] | None = None,
+    window_size: tuple[int, int] | None = None,
     headless: bool = False,
 ) -> PostResult:
     """Restore the X account session and post a tweet. Logs to post_logs.
     `media_paths` is an ordered list of files to attach (max 4 images, OR 1
-    video — X rejects mixed combinations and posts beyond those caps)."""
+    video — X rejects mixed combinations and posts beyond those caps).
+    `window_position` and `window_size` pin the Chromium window to a fixed
+    spot — used by the parallel scheduler to tile concurrent posts in a
+    deterministic grid instead of letting them stack at the OS default."""
     state, proxy_kwargs = _load_account_state(account_id)
     if state is None:
         result = PostResult(ok=False, error="ยังไม่มี session ที่บันทึกไว้")
@@ -53,6 +58,8 @@ async def post_tweet(
         content,
         proxy_kwargs,
         media_paths=media_paths or [],
+        window_position=window_position,
+        window_size=window_size,
         headless=headless,
     )
     _write_log(account_id, content, result)
@@ -103,13 +110,27 @@ async def _do_post(
     content: str,
     proxy_kwargs: dict[str, str] | None,
     media_paths: list[Path],
+    window_position: tuple[int, int] | None = None,
+    window_size: tuple[int, int] | None = None,
     headless: bool = False,
 ) -> PostResult:
     try:
         async with async_playwright() as pw:
+            args = ["--disable-blink-features=AutomationControlled"]
+            # Pin position/size when the scheduler asks — parallel posts
+            # tile in a grid so the user sees a clean layout instead of
+            # OS-random stacking.
+            if window_position is not None:
+                args.append(
+                    f"--window-position={window_position[0]},{window_position[1]}"
+                )
+            if window_size is not None:
+                args.append(
+                    f"--window-size={window_size[0]},{window_size[1]}"
+                )
             launch_kwargs: dict[str, Any] = {
                 "headless": headless,
-                "args": ["--disable-blink-features=AutomationControlled"],
+                "args": args,
             }
             if proxy_kwargs:
                 launch_kwargs["proxy"] = proxy_kwargs
