@@ -323,11 +323,14 @@ function ProfileSection({
   onOperatorChange: (op: Operator) => void
 }) {
   const [interval, setIntervalSec] = useState(operator.rotation_interval_seconds)
+  const [parallelPosts, setParallelPosts] = useState(operator.parallel_posts)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const dirty = interval !== operator.rotation_interval_seconds
+  const dirty =
+    interval !== operator.rotation_interval_seconds ||
+    parallelPosts !== operator.parallel_posts
 
   async function onSave() {
     setSaving(true)
@@ -335,6 +338,7 @@ function ProfileSection({
     try {
       const updated = await api.updateOperator(operator.id, {
         rotation_interval_seconds: interval,
+        parallel_posts: parallelPosts,
       })
       onOperatorChange(updated)
     } catch (e) {
@@ -401,6 +405,33 @@ function ProfileSection({
             min={5}
             max={3600}
           />
+
+          <div
+            style={{
+              borderTop: '1px solid var(--border)',
+              paddingTop: 12,
+              marginTop: 4,
+            }}
+          >
+            <div className="field">
+              <span className="field-label-plain">โพสต์พร้อมกันสูงสุด</span>
+              <p className="muted-note is-inline" style={{ marginBottom: 6 }}>
+                จำนวนบัญชีที่ระบบจะเปิด Chromium พร้อมกันได้ใน 1 รอบ · 1 = ทำงานทีละบัญชี (เดิม) · มากขึ้น = throughput สูง แต่กิน RAM และเสี่ยงโดน X จับ pattern หากบัญชีใช้ proxy เดียวกัน (ระบบบังคับให้รันเรียงให้อัตโนมัติ)
+              </p>
+              <select
+                value={parallelPosts}
+                onChange={(e) => setParallelPosts(Number(e.target.value))}
+                style={{ maxWidth: 180 }}
+              >
+                {[1, 2, 3, 4, 5, 6].map((n) => (
+                  <option key={n} value={n}>
+                    {n} บัญชี{n === 1 ? ' (ทีละบัญชี)' : ' พร้อมกัน'}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
           {error && <div className="form-error">{error}</div>}
           <div className="form-actions">
             <button

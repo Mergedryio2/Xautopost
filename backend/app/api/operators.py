@@ -25,6 +25,7 @@ class OperatorOut(BaseModel):
     name: str
     avatar_color: str
     rotation_interval_seconds: int
+    parallel_posts: int
     created_at: datetime
     last_login_at: datetime | None
 
@@ -42,6 +43,10 @@ class OperatorLogin(BaseModel):
 
 class OperatorUpdate(BaseModel):
     rotation_interval_seconds: int | None = Field(default=None, ge=1, le=3600)
+    # 1 = original sequential behavior. 4 cap matches the analysis in the
+    # design discussion — beyond that, RAM (4× Chromium) and X anti-spam
+    # detection start dominating the gains.
+    parallel_posts: int | None = Field(default=None, ge=1, le=6)
     avatar_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
 
 
@@ -101,6 +106,6 @@ def update_operator(
         setattr(op, k, v)
     db.commit()
     db.refresh(op)
-    if "rotation_interval_seconds" in data:
+    if "rotation_interval_seconds" in data or "parallel_posts" in data:
         scheduler.refresh_operator(op.id)
     return op

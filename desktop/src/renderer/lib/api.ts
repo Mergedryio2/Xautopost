@@ -3,6 +3,8 @@ export type Operator = {
   name: string
   avatar_color: string
   rotation_interval_seconds: number
+  // 1 = sequential (legacy behavior). Up to 6 parallel posts per operator.
+  parallel_posts: number
   created_at: string
   last_login_at: string | null
 }
@@ -227,7 +229,11 @@ export const api = {
     }),
   updateOperator: (
     id: number,
-    data: Partial<{ rotation_interval_seconds: number; avatar_color: string }>,
+    data: Partial<{
+      rotation_interval_seconds: number
+      parallel_posts: number
+      avatar_color: string
+    }>,
   ) =>
     request<Operator>(`/operators/${id}`, {
       method: 'PATCH',

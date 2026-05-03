@@ -21,14 +21,26 @@ from app.services.poster import post_tweet
 
 log = logging.getLogger(__name__)
 
-# Serializes posts so multiple operators don't open concurrent Chromium.
-_post_lock = asyncio.Lock()
-
 # Account IDs currently mid-post. The UI polls this (via the is_posting
 # field on XAccountOut) to show a live "📮 กำลังโพสต์อยู่" indicator.
+# Also doubles as the tick-time exclusion set so concurrent ticks don't
+# double-pick the same account.
 # In-memory single-process state — resets on sidecar restart, which is
 # correct because in-flight posts also abort on restart.
 _currently_posting: set[int] = set()
+
+# Per-operator in-flight counter. Tick uses (parallel_posts - count) to
+# decide how many new accounts to spawn this round. Updated alongside
+# _currently_posting; the dict key is removed when count hits 0 so the
+# state is self-cleaning across operator deletes.
+_in_flight_by_operator: dict[int, int] = {}
+
+# Proxy IDs currently driving a post. Tick skips accounts whose proxy is
+# busy so two parallel posts don't fire through the same proxy at once —
+# both because most proxies cap concurrent connections and because two
+# simultaneous X requests through one IP is exactly the fingerprint X's
+# anti-spam looks for.
+_proxy_in_use: set[int] = set()
 
 
 def is_posting(account_id: int) -> bool:
@@ -109,6 +121,10 @@ class RotationScheduler:
                 "operator %d: no enabled accounts, rotation idle", operator_id
             )
             return
+        # max_instances=1 + coalesce=True is fine even with parallel posting:
+        # the tick body now fires-and-forgets the actual posts, so it returns
+        # in milliseconds. The next tick (rotation_interval_seconds later)
+        # checks for free slots and tops up.
         self._scheduler.add_job(
             self._tick,
             trigger="interval",
@@ -133,6 +149,24 @@ class RotationScheduler:
             log.exception("rotation tick failed for operator %s", operator_id)
 
     async def _do_tick(self, operator_id: int) -> None:
+        """Pick up to (parallel_posts - in_flight) eligible accounts and
+        spawn each as an independent task. The tick body itself is fast
+        (DB queries + bookkeeping); the actual content build and Playwright
+        drive happen inside the spawned tasks so a slow AI call for one
+        account doesn't block the rest of the rotation."""
+        with SessionLocal() as db:
+            op = db.get(Operator, operator_id)
+            if op is None:
+                return
+            cap = max(1, op.parallel_posts)
+
+        in_flight = _in_flight_by_operator.get(operator_id, 0)
+        free_slots = cap - in_flight
+        if free_slots <= 0:
+            return
+
+        chosen_jobs: list[tuple[int, int, int | None, int]] = []
+
         with SessionLocal() as db:
             # Sort by least-recently-posted (NULLs first => never-posted accounts
             # get the slot first), tie-break by id for stable order.
@@ -155,7 +189,6 @@ class RotationScheduler:
             now = now_local()
             today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-            chosen: XAccount | None = None
             # Loud skips = configuration problems the user needs to know about
             # (no prompt, manual style empty, etc). Operational throttling
             # (active window, per-account interval, daily limit) is silent —
@@ -163,6 +196,20 @@ class RotationScheduler:
             loud_skipped: list[tuple[int, str]] = []
 
             for acc in accounts:
+                if len(chosen_jobs) >= free_slots:
+                    break
+
+                # Concurrency exclusion 1: account already mid-post (from an
+                # earlier tick that hasn't completed yet).
+                if acc.id in _currently_posting:
+                    continue
+
+                # Concurrency exclusion 2: another in-flight post is using
+                # this account's proxy. Two parallel X requests through one
+                # IP is the fingerprint we're trying to avoid.
+                if acc.proxy_id is not None and acc.proxy_id in _proxy_in_use:
+                    continue
+
                 # Operational gate 1: active hours window — silent skip
                 if not _in_active_window(
                     now, acc.active_hours_start, acc.active_hours_end
@@ -206,112 +253,146 @@ class RotationScheduler:
                     )
                     continue
 
-                chosen = acc
-                break
+                chosen_jobs.append(
+                    (acc.id, acc.operator_id, acc.proxy_id, acc.default_prompt_id)
+                )
 
-            if chosen is None:
+            if not chosen_jobs:
                 # Only surface configuration issues; operational throttling is
                 # part of normal operation and shouldn't pollute the log.
                 if loud_skipped:
                     _log_skip(loud_skipped[0][0], loud_skipped[0][1])
                 return
 
-            prompt = db.get(Prompt, chosen.default_prompt_id)
-            if prompt is None:
-                _log_skip(chosen.id, "default prompt ถูกลบไปแล้ว")
-                return
-
-            account_id = chosen.id
-            operator_id = chosen.operator_id
-            mode = prompt.mode
-            body = prompt.body
-            fallback = prompt.fallback_text
-            decorate_emoji = prompt.decorate_emoji
-            decorate_letters = prompt.decorate_letters
-
-            # Media is only meaningful for manual prompts (AI ones generate
-            # text on each tick, so there's no candidate to attach files to).
-            # Resolved here while we still hold the session.
-            media_paths: list[Path] = []
-
-            if mode == "manual":
-                provider = "manual"
-                model = "-"
-                api_key_plain = None
-            else:
-                key_row = db.scalar(
-                    select(ApiKey)
-                    .where(
-                        ApiKey.operator_id == chosen.operator_id,
-                        ApiKey.provider == prompt.provider,
-                    )
-                    .order_by(ApiKey.created_at.desc())
+            # Reserve slots SYNCHRONOUSLY (no await between mark and spawn)
+            # so a fast subsequent tick can't double-pick or exceed the cap.
+            # asyncio is single-threaded, so this block of mutations is
+            # atomic w.r.t. the next coroutine point.
+            for account_id, op_id, proxy_id, _ in chosen_jobs:
+                _currently_posting.add(account_id)
+                _in_flight_by_operator[op_id] = (
+                    _in_flight_by_operator.get(op_id, 0) + 1
                 )
-                if key_row is None:
-                    _log_skip(chosen.id, f"ไม่มี API key ของ {prompt.provider}")
-                    return
-                provider = prompt.provider
-                model = prompt.model
-                api_key_plain = get_crypto().decrypt_str(key_row.key_enc)
+                if proxy_id is not None:
+                    _proxy_in_use.add(proxy_id)
 
-        # Build content
-        if mode == "manual":
-            candidates = split_manual(body)
-            if not candidates:
-                _log_skip(
-                    account_id,
-                    "สไตล์เขียนเองยังไม่มีข้อความ · แก้ไขสไตล์แล้วใส่ข้อความก่อน",
-                )
-                return
-            picked = random.choice(candidates)
-            content, media_ids = extract_media_tokens(picked)
-            content = apply_decoration(
-                content,
-                with_emoji=decorate_emoji,
-                with_letters=decorate_letters,
-                account_id=account_id,
+        # Spawn each post as an independent task. The tick returns
+        # immediately; the next interval tops up free slots.
+        for account_id, op_id, proxy_id, prompt_id in chosen_jobs:
+            asyncio.create_task(
+                self._do_post(account_id, op_id, proxy_id, prompt_id)
             )
-            if media_ids:
-                with SessionLocal() as media_db:
-                    media_paths = resolve_media_ids(
-                        media_db, operator_id, media_ids
-                    )
-        else:
-            try:
-                content = await generate_content(
-                    provider=provider,  # type: ignore[arg-type]
-                    model=model,
-                    system_prompt=body,
-                    api_key=api_key_plain or "",
-                )
-            except Exception:  # noqa: BLE001
-                log.exception("AI generation failed for account %s", account_id)
-                if fallback:
-                    content = fallback
-                else:
-                    _log_skip(
-                        account_id, "AI generate ล้มเหลว และไม่มี fallback"
-                    )
+
+    async def _do_post(
+        self,
+        account_id: int,
+        operator_id: int,
+        proxy_id: int | None,
+        prompt_id: int,
+    ) -> None:
+        """Build content for one chosen account and drive the Playwright
+        post. Wrapped in try/finally so the in-flight bookkeeping is
+        always released, even on AI / network / Playwright failures."""
+        try:
+            with SessionLocal() as db:
+                prompt = db.get(Prompt, prompt_id)
+                if prompt is None:
+                    _log_skip(account_id, "default prompt ถูกลบไปแล้ว")
                     return
 
-        # Post (serialized across operators).
-        # We launch the browser visibly (headless=False) so the operator can
-        # watch posts happen in real time and intervene if X surfaces a
-        # captcha / re-auth dialog. Same flow as the manual "ทดลองโพสต์"
-        # button — single code path, fewer surprises.
-        # _currently_posting marks this account as actively posting so the
-        # UI can show a live indicator until the post completes.
-        _currently_posting.add(account_id)
-        try:
-            async with _post_lock:
-                await post_tweet(
+                mode = prompt.mode
+                body = prompt.body
+                fallback = prompt.fallback_text
+                decorate_emoji = prompt.decorate_emoji
+                decorate_letters = prompt.decorate_letters
+
+                if mode == "manual":
+                    provider = "manual"
+                    model = "-"
+                    api_key_plain = None
+                else:
+                    key_row = db.scalar(
+                        select(ApiKey)
+                        .where(
+                            ApiKey.operator_id == operator_id,
+                            ApiKey.provider == prompt.provider,
+                        )
+                        .order_by(ApiKey.created_at.desc())
+                    )
+                    if key_row is None:
+                        _log_skip(
+                            account_id,
+                            f"ไม่มี API key ของ {prompt.provider}",
+                        )
+                        return
+                    provider = prompt.provider
+                    model = prompt.model
+                    api_key_plain = get_crypto().decrypt_str(key_row.key_enc)
+
+            media_paths: list[Path] = []
+            if mode == "manual":
+                candidates = split_manual(body)
+                if not candidates:
+                    _log_skip(
+                        account_id,
+                        "สไตล์เขียนเองยังไม่มีข้อความ · แก้ไขสไตล์แล้วใส่ข้อความก่อน",
+                    )
+                    return
+                picked = random.choice(candidates)
+                content, media_ids = extract_media_tokens(picked)
+                content = apply_decoration(
+                    content,
+                    with_emoji=decorate_emoji,
+                    with_letters=decorate_letters,
                     account_id=account_id,
-                    content=content,
-                    media_paths=media_paths or None,
-                    headless=False,
                 )
+                if media_ids:
+                    with SessionLocal() as media_db:
+                        media_paths = resolve_media_ids(
+                            media_db, operator_id, media_ids
+                        )
+            else:
+                try:
+                    content = await generate_content(
+                        provider=provider,  # type: ignore[arg-type]
+                        model=model,
+                        system_prompt=body,
+                        api_key=api_key_plain or "",
+                    )
+                except Exception:  # noqa: BLE001
+                    log.exception(
+                        "AI generation failed for account %s", account_id
+                    )
+                    if fallback:
+                        content = fallback
+                    else:
+                        _log_skip(
+                            account_id,
+                            "AI generate ล้มเหลว และไม่มี fallback",
+                        )
+                        return
+
+            # Playwright opens its own visible Chromium per task. Multiple
+            # tasks run concurrently up to the operator's parallel_posts
+            # cap (enforced at tick time). Per-proxy serial posting is
+            # enforced via the _proxy_in_use guard at tick time too.
+            await post_tweet(
+                account_id=account_id,
+                content=content,
+                media_paths=media_paths or None,
+                headless=False,
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("post task failed for account %s", account_id)
         finally:
             _currently_posting.discard(account_id)
+            remaining = _in_flight_by_operator.get(operator_id, 0) - 1
+            if remaining <= 0:
+                _in_flight_by_operator.pop(operator_id, None)
+            else:
+                _in_flight_by_operator[operator_id] = remaining
+            if proxy_id is not None:
+                _proxy_in_use.discard(proxy_id)
 
 
 def _in_active_window(now: datetime, start: int, end: int) -> bool:

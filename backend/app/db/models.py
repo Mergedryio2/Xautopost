@@ -17,6 +17,12 @@ class Operator(Base):
     passphrase_hash: Mapped[str] = mapped_column(String(255))
     avatar_color: Mapped[str] = mapped_column(String(16), default="#F4A6CD")
     rotation_interval_seconds: Mapped[int] = mapped_column(default=5)
+    # Concurrency cap for the rotation: how many of this operator's accounts
+    # can be mid-post at once. 1 keeps the original sequential behavior;
+    # raising it spawns up to N concurrent Playwright browsers. Bounded at
+    # the API layer (1-4) — beyond that hits diminishing returns vs. memory
+    # and X anti-spam pattern detection.
+    parallel_posts: Mapped[int] = mapped_column(default=1)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(default=None)
 
