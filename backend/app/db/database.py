@@ -54,11 +54,29 @@ def init_db() -> None:
     _migrate_prompts()
 
 
+def _drop_legacy_column(conn, table: str, column: str) -> None:  # type: ignore[no-untyped-def]
+    """Drop a column the model no longer maps. Required because SQLAlchemy's
+    `mapped_column(default=...)` is a Python-side default — `create_all()`
+    emits the column as `NOT NULL` *without* a SQL DEFAULT, so once the model
+    stops listing the column, every new INSERT fails the NOT NULL check on
+    the still-present table column. SQLite ≥3.35 supports DROP COLUMN
+    directly; older versions fail and the migration logs the error and moves
+    on (the user will hit the IntegrityError again, but the rest of the
+    schema stays consistent)."""
+    cols = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+    if column not in {row[1] for row in cols}:
+        return
+    try:
+        conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
+        log.info("migrated: dropped legacy column %s.%s", table, column)
+    except Exception:  # noqa: BLE001
+        log.exception("failed to drop legacy column %s.%s", table, column)
+
+
 def _migrate_prompts() -> None:
     """Add new columns to prompts if they don't exist."""
     new_columns: list[tuple[str, str]] = [
         ("mode", "TEXT NOT NULL DEFAULT 'ai'"),
-        ("vary_decoration", "BOOLEAN NOT NULL DEFAULT 1"),
         ("decorate_emoji", "BOOLEAN NOT NULL DEFAULT 1"),
         ("decorate_letters", "BOOLEAN NOT NULL DEFAULT 0"),
     ]
@@ -80,6 +98,10 @@ def _migrate_prompts() -> None:
                 text("UPDATE prompts SET decorate_emoji = vary_decoration")
             )
             log.info("migrated: backfilled prompts.decorate_emoji from vary_decoration")
+        # Old DBs created via SQLAlchemy `create_all` while the model still
+        # listed `vary_decoration` get a NOT NULL column with no SQL default;
+        # after the model dropped the field, INSERTs would fail. Drop it.
+        _drop_legacy_column(conn, "prompts", "vary_decoration")
 
 
 def _migrate_operators() -> None:
@@ -106,8 +128,6 @@ def _migrate_x_accounts() -> None:
             "INTEGER REFERENCES prompts(id) ON DELETE SET NULL",
         ),
         ("posting_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
-        ("min_interval_minutes", "INTEGER NOT NULL DEFAULT 60"),
-        ("max_interval_minutes", "INTEGER NOT NULL DEFAULT 240"),
         ("min_interval_seconds", "INTEGER NOT NULL DEFAULT 3600"),
         ("max_interval_seconds", "INTEGER NOT NULL DEFAULT 14400"),
         ("active_hours_start", "INTEGER NOT NULL DEFAULT 9"),
@@ -142,3 +162,10 @@ def _migrate_x_accounts() -> None:
                 )
             )
             log.info("migrated: backfilled x_accounts.max_interval_seconds from minutes")
+        # Old DBs created via SQLAlchemy `create_all` while the model still
+        # listed the *_minutes fields get NOT NULL columns without SQL
+        # DEFAULTs; after the model switched to seconds, the next account
+        # INSERT failed because SQLAlchemy no longer emits those columns
+        # and SQLite has no value to fall back to. Drop them.
+        _drop_legacy_column(conn, "x_accounts", "min_interval_minutes")
+        _drop_legacy_column(conn, "x_accounts", "max_interval_minutes")
