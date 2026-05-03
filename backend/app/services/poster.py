@@ -39,6 +39,7 @@ async def post_tweet(
     media_paths: list[Path] | None = None,
     window_position: tuple[int, int] | None = None,
     window_size: tuple[int, int] | None = None,
+    post_barrier: asyncio.Barrier | None = None,
     headless: bool = False,
 ) -> PostResult:
     """Restore the X account session and post a tweet. Logs to post_logs.
@@ -46,7 +47,13 @@ async def post_tweet(
     video — X rejects mixed combinations and posts beyond those caps).
     `window_position` and `window_size` pin the Chromium window to a fixed
     spot — used by the parallel scheduler to tile concurrent posts in a
-    deterministic grid instead of letting them stack at the OS default."""
+    deterministic grid instead of letting them stack at the OS default.
+    `post_barrier`, when supplied, makes this task wait at the very last
+    moment (after typing + media upload + button-enabled gate) until all
+    sibling tasks in the same batch reach the same point — then everyone
+    presses the post hotkey together. If the barrier breaks (sibling
+    failed) or times out, the task posts solo so its prep work isn't
+    wasted."""
     state, proxy_kwargs = _load_account_state(account_id)
     if state is None:
         result = PostResult(ok=False, error="ยังไม่มี session ที่บันทึกไว้")
@@ -60,6 +67,7 @@ async def post_tweet(
         media_paths=media_paths or [],
         window_position=window_position,
         window_size=window_size,
+        post_barrier=post_barrier,
         headless=headless,
     )
     _write_log(account_id, content, result)
@@ -112,6 +120,7 @@ async def _do_post(
     media_paths: list[Path],
     window_position: tuple[int, int] | None = None,
     window_size: tuple[int, int] | None = None,
+    post_barrier: asyncio.Barrier | None = None,
     headless: bool = False,
 ) -> PostResult:
     try:
@@ -232,6 +241,27 @@ async def _do_post(
                 ).first
                 button_timeout = 120_000 if media_paths else 20_000
                 await button.wait_for(timeout=button_timeout)
+
+                # Batch barrier: wait until every sibling task in this
+                # parallel batch is also "ready to post" — then everyone
+                # dispatches the post hotkey within the same event-loop
+                # turn. Cap the wait at 5 minutes so a stuck sibling
+                # can't strand the whole batch; if the barrier breaks
+                # (sibling failed) or times out, post solo so this task's
+                # prep doesn't go to waste.
+                if post_barrier is not None:
+                    try:
+                        await asyncio.wait_for(
+                            post_barrier.wait(), timeout=300
+                        )
+                    except asyncio.BrokenBarrierError:
+                        log.info(
+                            "post barrier broken — sibling failed; posting solo"
+                        )
+                    except TimeoutError:
+                        log.warning(
+                            "post barrier timed out after 5 min; posting solo"
+                        )
                 await page.keyboard.press(_POST_HOTKEY)
 
                 # Poll for outcome up to ~12s. Success signals: editor gone

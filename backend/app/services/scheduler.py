@@ -353,12 +353,26 @@ class RotationScheduler:
                     (account_id, op_id, proxy_id, prompt_id, slot_idx, cap)
                 )
 
+        # Build a barrier per batch so all sibling tasks press the post
+        # hotkey at the same event-loop turn (instead of each finishing
+        # its prep + posting independently). Single-job batches don't
+        # need synchronization and skip the barrier entirely.
+        batch_barrier: asyncio.Barrier | None = None
+        if len(jobs_with_slots) > 1:
+            batch_barrier = asyncio.Barrier(len(jobs_with_slots))
+
         # Spawn each post as an independent task. The tick returns
         # immediately; the next interval tops up free slots.
         for account_id, op_id, proxy_id, prompt_id, slot_idx, total in jobs_with_slots:
             asyncio.create_task(
                 self._do_post(
-                    account_id, op_id, proxy_id, prompt_id, slot_idx, total
+                    account_id,
+                    op_id,
+                    proxy_id,
+                    prompt_id,
+                    slot_idx,
+                    total,
+                    batch_barrier,
                 )
             )
 
@@ -370,10 +384,18 @@ class RotationScheduler:
         prompt_id: int,
         slot_idx: int,
         total_slots: int,
+        batch_barrier: asyncio.Barrier | None,
     ) -> None:
         """Build content for one chosen account and drive the Playwright
         post. Wrapped in try/finally so the in-flight bookkeeping is
-        always released, even on AI / network / Playwright failures."""
+        always released, even on AI / network / Playwright failures.
+        `batch_barrier`, if not None, is shared across all siblings in the
+        same parallel batch — this task aborts it on early failure so
+        siblings don't wait forever for a participant that won't show up."""
+        # Track whether we ever handed the barrier to post_tweet so the
+        # finally block knows whether to abort it (avoids double-aborting
+        # after post_tweet itself returned).
+        barrier_handed_off = False
         try:
             with SessionLocal() as db:
                 prompt = db.get(Prompt, prompt_id)
@@ -458,19 +480,36 @@ class RotationScheduler:
             # cap (enforced at tick time). Per-proxy serial posting is
             # enforced via the _proxy_in_use guard at tick time too. The
             # tile slot pins the window to a fixed (x, y, w, h) so the
-            # parallel windows land in a deterministic grid.
+            # parallel windows land in a deterministic grid. The batch
+            # barrier (if any) syncs the actual hotkey press across
+            # siblings so the batch posts to X within the same tick.
             x, y, w, h = _slot_position(slot_idx, total_slots)
+            barrier_handed_off = True
             await post_tweet(
                 account_id=account_id,
                 content=content,
                 media_paths=media_paths or None,
                 window_position=(x, y),
                 window_size=(w, h),
+                post_barrier=batch_barrier,
                 headless=False,
             )
         except Exception:  # noqa: BLE001
             log.exception("post task failed for account %s", account_id)
         finally:
+            # If we failed before post_tweet (content build, AI, missing
+            # API key, etc.), siblings would block forever on the barrier
+            # waiting for our wait() that will never come. Abort the
+            # barrier so they unblock and post solo.
+            if (
+                batch_barrier is not None
+                and not barrier_handed_off
+                and not batch_barrier.broken
+            ):
+                try:
+                    await batch_barrier.abort()
+                except Exception:  # noqa: BLE001
+                    pass
             _currently_posting.discard(account_id)
             remaining = _in_flight_by_operator.get(operator_id, 0) - 1
             if remaining <= 0:
