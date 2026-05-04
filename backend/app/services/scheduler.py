@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import platform
 import random
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -48,23 +50,61 @@ _proxy_in_use: set[int] = set()
 # deterministic grid instead of stacking at the OS default.
 _busy_slots_by_operator: dict[int, set[int]] = {}
 
-# Tile layout assumes a 1920×1080 desktop with 40px reserved for the OS
-# bar (taskbar/menubar). Larger monitors leave the windows clustered in
-# the upper-left quadrant; smaller monitors (1366×768) may overflow the
-# right/bottom edge by a few hundred px — acceptable for the common
-# laptop case, and the user can drag the offending window if needed.
-_SCREEN_W = 1920
-_SCREEN_H_USABLE = 1040
-_TILE_MARGIN = 20
+def _detect_screen_size() -> tuple[int, int]:
+    """Best-effort detection of the main display's usable size. macOS:
+    AppleScript via Finder returns the desktop bounds (already excludes
+    the menubar); we subtract ~50px more for the Dock. Windows: ctypes
+    GetSystemMetrics, minus ~40px for the taskbar. Falls back to
+    1920×1040 on detection failure (headless server, sandboxed bundle
+    where osascript is unavailable, etc.). Cached at module import —
+    operators don't migrate displays mid-session."""
+    try:
+        if platform.system() == "Darwin":
+            r = subprocess.run(
+                [
+                    "osascript",
+                    "-e",
+                    'tell application "Finder" to get bounds of window of desktop',
+                ],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            if r.returncode == 0:
+                parts = [int(p.strip()) for p in r.stdout.strip().split(",")]
+                if len(parts) == 4:
+                    return parts[2], max(600, parts[3] - 50)
+        elif platform.system() == "Windows":
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            try:
+                user32.SetProcessDPIAware()
+            except Exception:  # noqa: BLE001
+                pass
+            return (
+                user32.GetSystemMetrics(0),
+                max(600, user32.GetSystemMetrics(1) - 40),
+            )
+    except Exception:  # noqa: BLE001
+        pass
+    return 1920, 1040
+
+
+_SCREEN_W, _SCREEN_H_USABLE = _detect_screen_size()
+_TILE_MARGIN = 16
 
 
 def _slot_position(slot_idx: int, total_slots: int) -> tuple[int, int, int, int]:
-    """Return (x, y, w, h) for a window in a deterministic tile grid.
-    Single-window layout centers in the screen with a generous size;
-    multi-window layouts pick a column/row count tuned so each cell stays
-    above ~600px wide (the practical minimum for X's composer)."""
+    """Return (x, y, w, h) for a window in a deterministic tile grid sized
+    against the detected screen so concurrent windows always tile without
+    overlap regardless of how many accounts are running. Single-window
+    layout caps the size so it never dominates the screen — the operator
+    is supervising automation, not editing in the window themselves."""
     if total_slots <= 1:
-        w, h = 900, 700
+        # Cap at a compact size; on small displays shrink to fit.
+        w = min(720, _SCREEN_W - 2 * _TILE_MARGIN)
+        h = min(560, _SCREEN_H_USABLE - 2 * _TILE_MARGIN)
         x = (_SCREEN_W - w) // 2
         y = (_SCREEN_H_USABLE - h) // 2
         return (x, y, w, h)
@@ -353,16 +393,9 @@ class RotationScheduler:
                     (account_id, op_id, proxy_id, prompt_id, slot_idx, cap)
                 )
 
-        # Build a barrier per batch so all sibling tasks press the post
-        # hotkey at the same event-loop turn (instead of each finishing
-        # its prep + posting independently). Single-job batches don't
-        # need synchronization and skip the barrier entirely.
-        batch_barrier: asyncio.Barrier | None = None
-        if len(jobs_with_slots) > 1:
-            batch_barrier = asyncio.Barrier(len(jobs_with_slots))
-
-        # Spawn each post as an independent task. The tick returns
-        # immediately; the next interval tops up free slots.
+        # Spawn each post as an independent task — they run fully
+        # concurrent and post the moment their own prep completes. The
+        # tick returns immediately; the next interval tops up free slots.
         for account_id, op_id, proxy_id, prompt_id, slot_idx, total in jobs_with_slots:
             asyncio.create_task(
                 self._do_post(
@@ -372,7 +405,6 @@ class RotationScheduler:
                     prompt_id,
                     slot_idx,
                     total,
-                    batch_barrier,
                 )
             )
 
@@ -384,18 +416,10 @@ class RotationScheduler:
         prompt_id: int,
         slot_idx: int,
         total_slots: int,
-        batch_barrier: asyncio.Barrier | None,
     ) -> None:
         """Build content for one chosen account and drive the Playwright
         post. Wrapped in try/finally so the in-flight bookkeeping is
-        always released, even on AI / network / Playwright failures.
-        `batch_barrier`, if not None, is shared across all siblings in the
-        same parallel batch — this task aborts it on early failure so
-        siblings don't wait forever for a participant that won't show up."""
-        # Track whether we ever handed the barrier to post_tweet so the
-        # finally block knows whether to abort it (avoids double-aborting
-        # after post_tweet itself returned).
-        barrier_handed_off = False
+        always released, even on AI / network / Playwright failures."""
         try:
             with SessionLocal() as db:
                 prompt = db.get(Prompt, prompt_id)
@@ -480,36 +504,20 @@ class RotationScheduler:
             # cap (enforced at tick time). Per-proxy serial posting is
             # enforced via the _proxy_in_use guard at tick time too. The
             # tile slot pins the window to a fixed (x, y, w, h) so the
-            # parallel windows land in a deterministic grid. The batch
-            # barrier (if any) syncs the actual hotkey press across
-            # siblings so the batch posts to X within the same tick.
+            # parallel windows land in a deterministic grid. Each task
+            # posts independently the moment its own prep is ready.
             x, y, w, h = _slot_position(slot_idx, total_slots)
-            barrier_handed_off = True
             await post_tweet(
                 account_id=account_id,
                 content=content,
                 media_paths=media_paths or None,
                 window_position=(x, y),
                 window_size=(w, h),
-                post_barrier=batch_barrier,
                 headless=False,
             )
         except Exception:  # noqa: BLE001
             log.exception("post task failed for account %s", account_id)
         finally:
-            # If we failed before post_tweet (content build, AI, missing
-            # API key, etc.), siblings would block forever on the barrier
-            # waiting for our wait() that will never come. Abort the
-            # barrier so they unblock and post solo.
-            if (
-                batch_barrier is not None
-                and not barrier_handed_off
-                and not batch_barrier.broken
-            ):
-                try:
-                    await batch_barrier.abort()
-                except Exception:  # noqa: BLE001
-                    pass
             _currently_posting.discard(account_id)
             remaining = _in_flight_by_operator.get(operator_id, 0) - 1
             if remaining <= 0:
