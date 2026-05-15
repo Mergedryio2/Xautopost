@@ -113,31 +113,28 @@ export function Accounts() {
   }
 
   async function onAssignStyle(promptId: number) {
-    if (!styleOf) return
-    // Always look up the prompt's mode so we route to the correct slot
-    // regardless of which button the user clicked — picking a reply prompt
-    // from the post-slot picker (or vice-versa) silently lands in the
-    // right column. The picker pre-filters by slot but this is belt-and-
-    // suspenders against any edge-case mismatch.
-    const ps = await api.listPrompts()
-    setPrompts(ps)
-    const picked = ps.find((p) => p.id === promptId)
-    const targetSlot: 'post' | 'reply' =
-      picked?.mode === 'reply' ? 'reply' : 'post'
-    const patch: Partial<{
-      default_prompt_id: number | null
-      reply_prompt_id: number | null
-    }> = {}
-    if (targetSlot === 'reply') {
+    // Capture styleOf into a local so the closure can't see a null value
+    // after a downstream setStyleOf(null) batches in. Route by the slot the
+    // user explicitly opened — the picker already pre-filters prompts by
+    // slot, so trusting the click intent is both correct and cheaper than
+    // re-fetching prompts to inspect the picked one's mode.
+    const target = styleOf
+    if (!target) return
+    const patch: { default_prompt_id?: number; reply_prompt_id?: number } = {}
+    if (target.slot === 'reply') {
       patch.reply_prompt_id = promptId
     } else {
       patch.default_prompt_id = promptId
     }
     try {
-      const updated = await api.updateAccount(styleOf.acc.id, patch)
+      const updated = await api.updateAccount(target.acc.id, patch)
       setAccounts((prev) =>
         prev.map((a) => (a.id === updated.id ? updated : a)),
       )
+      // Refresh prompts so a freshly-created prompt shows up in the row
+      // preview ("body slice", provider badge, etc) on the next render.
+      const ps = await api.listPrompts()
+      setPrompts(ps)
     } catch (e) {
       setAlert(e instanceof Error ? e.message : String(e))
     }

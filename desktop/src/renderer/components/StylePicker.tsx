@@ -76,7 +76,7 @@ const TEMPLATES: StyleTemplate[] = [
     emoji: '💬',
     name: 'Reply โพสต์เก่า',
     sub: 'ตอบกลับโพสต์เดิมของบัญชีตัวเอง',
-    body: '',
+    body: 'คุณเป็นเจ้าของโพสต์ต้นทาง · เขียน reply ต่อยอดจากโพสต์ของตัวเอง ภาษาไทย ความยาวไม่เกิน 200 ตัวอักษร น้ำเสียงเป็นกันเอง ไม่ทัก hi ไม่ทักทาย ให้เหมือนคุยต่อจากที่เคยพูด',
     mode: 'reply',
   },
 ]
@@ -402,8 +402,13 @@ function PromptForm({
   const [targetTweetId, setTargetTweetId] = useState<string | null>(
     existing?.target_tweet_id ?? null,
   )
+  // Default to latest_n for NEW reply prompts. The previous 'single' default
+  // forced users to pick a specific tweet before save would succeed; if they
+  // skipped that step the validation blocked save with an error that was
+  // easy to miss. latest_n + count 5 is a sensible "just works" default —
+  // the user can switch modes after the fact if they want a fixed target.
   const [replyTargetMode, setReplyTargetMode] = useState<ReplyTargetMode>(
-    existing?.reply_target_mode ?? 'single',
+    existing?.reply_target_mode ?? 'latest_n',
   )
   const [replyTargetCount, setReplyTargetCount] = useState<number>(
     existing?.reply_target_count ?? 5,
