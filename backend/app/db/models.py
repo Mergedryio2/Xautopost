@@ -70,6 +70,15 @@ class XAccount(Base):
     active_hours_start: Mapped[int] = mapped_column(default=9)
     active_hours_end: Mapped[int] = mapped_column(default=22)
     last_post_at: Mapped[datetime | None] = mapped_column(default=None)
+    # Tweet index bookkeeping. last_scan_at is the wall-clock time the last
+    # successful scrape finished; scan_status is one of 'idle' | 'running' |
+    # 'error' (loud failure for the UI). scanned_tweet_count is the count
+    # observed at end of last scan — surfaced in the UI so the user can tell
+    # whether the scan completed or bailed early.
+    last_scan_at: Mapped[datetime | None] = mapped_column(default=None)
+    scan_status: Mapped[str] = mapped_column(String(16), default="idle")
+    scanned_tweet_count: Mapped[int] = mapped_column(default=0)
+    scan_error: Mapped[str | None] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
@@ -99,6 +108,9 @@ class Prompt(Base):
     # 'ai' = body is the system prompt, AI generates each post.
     # 'manual' = body is the literal post text(s); split by `\n---\n` and the
     # scheduler picks one at random per tick. No AI / API key needed.
+    # 'reply' = body works like 'ai' or 'manual' depending on reply_source,
+    # but the scheduler routes through poster.post_reply instead of post_tweet
+    # using target_tweet_id as the parent tweet.
     mode: Mapped[str] = mapped_column(String(16), default="ai")
     # Append decorations to each manual post so X doesn't see the same text
     # twice and reject as duplicate. AI prompts ignore these (their output is
@@ -109,6 +121,15 @@ class Prompt(Base):
     provider: Mapped[str] = mapped_column(String(32), default="openai")
     model: Mapped[str] = mapped_column(String(64), default="gpt-4o-mini")
     fallback_text: Mapped[str | None] = mapped_column(Text, default=None)
+    # Reply-mode fields. target_tweet_id is the X tweet id (string because
+    # X ids are 64-bit unsigned, beyond JS number safety). reply_repeat_limit
+    # caps how many times the scheduler will reply to the same target — 0
+    # means unlimited. reply_source picks where the reply text comes from:
+    # 'ai' regenerates via the AI prompt body, 'manual' uses body as literal
+    # text (same `\n---\n` split as manual mode).
+    target_tweet_id: Mapped[str | None] = mapped_column(String(32), default=None)
+    reply_repeat_limit: Mapped[int] = mapped_column(default=0)
+    reply_source: Mapped[str] = mapped_column(String(16), default="ai")
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -166,3 +187,39 @@ class PostLog(Base):
     status: Mapped[str] = mapped_column(String(16))  # success / failed / skipped
     detail: Mapped[str | None] = mapped_column(Text, default=None)
     tweet_url: Mapped[str | None] = mapped_column(String(255), default=None)
+    # When status='success' for a reply, this is the X tweet id of the parent
+    # tweet we replied to. The scheduler uses this column to count how many
+    # replies we've already sent against reply_repeat_limit on the prompt.
+    reply_to_tweet_id: Mapped[str | None] = mapped_column(
+        String(32), default=None, index=True
+    )
+
+
+class TweetIndex(Base):
+    """Cached snapshot of an X account's own timeline. Populated by the
+    Playwright scraper and refreshed periodically. The scheduler reads this
+    when running reply-mode prompts so we don't have to re-scrape on every
+    tick. tweet_id is X's snowflake id (string — 64-bit unsigned exceeds JS
+    safe int range); paired with x_account_id it's unique."""
+
+    __tablename__ = "tweet_index"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    x_account_id: Mapped[int] = mapped_column(
+        ForeignKey("x_accounts.id", ondelete="CASCADE"), index=True
+    )
+    tweet_id: Mapped[str] = mapped_column(String(32), index=True)
+    url: Mapped[str] = mapped_column(String(255))
+    # Preview text — full body is on X; we just need enough to render a list
+    # row. Truncated to ~500 chars at scrape time.
+    text_preview: Mapped[str | None] = mapped_column(Text, default=None)
+    has_media: Mapped[bool] = mapped_column(default=False)
+    is_reply: Mapped[bool] = mapped_column(default=False)
+    is_retweet: Mapped[bool] = mapped_column(default=False)
+    is_pinned: Mapped[bool] = mapped_column(default=False)
+    posted_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    scraped_at: Mapped[datetime] = mapped_column(default=utcnow)
+    # Set when a subsequent scan no longer sees a tweet that was indexed
+    # before. We don't hard-delete the row because there may still be
+    # post_logs pointing at it via reply_to_tweet_id.
+    deleted_at: Mapped[datetime | None] = mapped_column(default=None)

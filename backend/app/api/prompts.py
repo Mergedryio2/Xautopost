@@ -32,29 +32,42 @@ class PromptOut(BaseModel):
     provider: str
     model: str
     fallback_text: str | None
+    target_tweet_id: str | None
+    reply_repeat_limit: int
+    reply_source: str
     created_at: datetime
 
 
 class PromptCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     body: str = Field(min_length=1)
-    mode: str = Field(default="ai", pattern=r"^(ai|manual)$")
+    mode: str = Field(default="ai", pattern=r"^(ai|manual|reply)$")
     decorate_emoji: bool = True
     decorate_letters: bool = False
     provider: str = Field(default="openai", pattern=r"^(openai|gemini)$")
     model: str = Field(default="gpt-4o-mini", min_length=1, max_length=64)
     fallback_text: str | None = None
+    target_tweet_id: str | None = Field(
+        default=None, pattern=r"^\d{1,32}$"
+    )
+    reply_repeat_limit: int = Field(default=0, ge=0, le=10000)
+    reply_source: str = Field(default="ai", pattern=r"^(ai|manual)$")
 
 
 class PromptUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     body: str | None = Field(default=None, min_length=1)
-    mode: str | None = Field(default=None, pattern=r"^(ai|manual)$")
+    mode: str | None = Field(default=None, pattern=r"^(ai|manual|reply)$")
     decorate_emoji: bool | None = None
     decorate_letters: bool | None = None
     provider: str | None = Field(default=None, pattern=r"^(openai|gemini)$")
     model: str | None = Field(default=None, min_length=1, max_length=64)
     fallback_text: str | None = None
+    target_tweet_id: str | None = Field(
+        default=None, pattern=r"^\d{1,32}$"
+    )
+    reply_repeat_limit: int | None = Field(default=None, ge=0, le=10000)
+    reply_source: str | None = Field(default=None, pattern=r"^(ai|manual)$")
 
 
 class GenerateOut(BaseModel):
@@ -97,6 +110,9 @@ def create_prompt(
         provider=payload.provider,
         model=payload.model,
         fallback_text=payload.fallback_text,
+        target_tweet_id=payload.target_tweet_id,
+        reply_repeat_limit=payload.reply_repeat_limit,
+        reply_source=payload.reply_source,
     )
     db.add(p)
     db.commit()

@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { MediaPicker } from './MediaPicker'
 import { Modal } from './Modal'
+import { TweetPickerModal } from './TweetPickerModal'
 import {
   api,
   type AiProvider,
   type ApiKeyOut,
   type PromptMode,
   type PromptOut,
+  type ReplySource,
+  type TweetOut,
+  type XAccountOut,
 } from '../lib/api'
 
 export type StyleTemplate = {
@@ -66,6 +70,13 @@ const TEMPLATES: StyleTemplate[] = [
     sub: 'พิมพ์ทวีตเอง ไม่ใช้ AI',
     body: '',
     mode: 'manual',
+  },
+  {
+    emoji: '💬',
+    name: 'Reply โพสต์เก่า',
+    sub: 'ตอบกลับโพสต์เดิมของบัญชีตัวเอง',
+    body: '',
+    mode: 'reply',
   },
 ]
 
@@ -205,15 +216,29 @@ export function StylePicker({
                       className="row-avatar"
                       style={{
                         background:
-                          p.mode === 'manual' ? 'var(--lavender)' : 'var(--peach)',
+                          p.mode === 'reply'
+                            ? 'var(--primary-soft)'
+                            : p.mode === 'manual'
+                              ? 'var(--lavender)'
+                              : 'var(--peach)',
                       }}
                     >
-                      {p.mode === 'manual' ? '📝' : '✦'}
+                      {p.mode === 'reply' ? '💬' : p.mode === 'manual' ? '📝' : '✦'}
                     </div>
                     <div className="row-info">
                       <div className="row-title">{p.name}</div>
                       <div className="row-meta">
-                        {p.mode === 'manual' ? (
+                        {p.mode === 'reply' ? (
+                          <span
+                            className="provider-badge"
+                            style={{
+                              background: 'var(--primary-soft)',
+                              color: 'var(--text)',
+                            }}
+                          >
+                            Reply โพสต์เก่า · {p.reply_source === 'manual' ? 'เขียนเอง' : p.provider === 'openai' ? 'OpenAI' : 'Gemini'}
+                          </span>
+                        ) : p.mode === 'manual' ? (
                           <span
                             className="provider-badge"
                             style={{
@@ -346,6 +371,85 @@ function PromptForm({
   const [mediaPickerOpen, setMediaPickerOpen] = useState(false)
   const bodyRef = useRef<HTMLTextAreaElement>(null)
 
+  // Reply-mode state. Only meaningful when promptMode === 'reply', but
+  // declared unconditionally so the hook order stays stable on mode switch.
+  const [replySource, setReplySource] = useState<ReplySource>(
+    existing?.reply_source ?? 'ai',
+  )
+  const [replyRepeatLimit, setReplyRepeatLimit] = useState<number>(
+    existing?.reply_repeat_limit ?? 0,
+  )
+  const [targetTweetId, setTargetTweetId] = useState<string | null>(
+    existing?.target_tweet_id ?? null,
+  )
+  // The tweet picker browses one account at a time. Default to the first
+  // account; reset whenever the modal opens for an existing prompt by
+  // scanning its target back to its owning account in an effect below.
+  const [replyAccounts, setReplyAccounts] = useState<XAccountOut[]>([])
+  const [replyAccountId, setReplyAccountId] = useState<number | null>(null)
+  const [targetPreview, setTargetPreview] = useState<TweetOut | null>(null)
+  const [tweetPickerOpen, setTweetPickerOpen] = useState(false)
+
+  // Load accounts on mount (reply mode needs them; cheap call for other
+  // modes too, so we just always do it — guarded by promptMode === 'reply'
+  // in the JSX).
+  useEffect(() => {
+    let cancelled = false
+    if (promptMode !== 'reply') return
+    api.listAccounts().then(
+      (rows) => {
+        if (cancelled) return
+        setReplyAccounts(rows)
+        const first = rows[0]
+        if (replyAccountId === null && first) {
+          setReplyAccountId(first.id)
+        }
+      },
+      () => {
+        /* surfaced inline via the disabled picker if list is empty */
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [promptMode])
+
+  // Resolve the preview for an existing target_tweet_id. We don't know
+  // which account owns it offhand, so try each account until one returns
+  // a hit. Bounded by the number of accounts (small).
+  useEffect(() => {
+    if (!targetTweetId) {
+      setTargetPreview(null)
+      return
+    }
+    if (replyAccounts.length === 0) return
+    let cancelled = false
+    ;(async () => {
+      for (const acc of replyAccounts) {
+        try {
+          const rows = await api.listTweets(acc.id, {
+            q: targetTweetId,
+            limit: 1,
+          })
+          if (cancelled) return
+          const hit = rows.find((t) => t.tweet_id === targetTweetId)
+          if (hit) {
+            setTargetPreview(hit)
+            setReplyAccountId(acc.id)
+            return
+          }
+        } catch {
+          // ignore — try next account
+        }
+      }
+      if (!cancelled) setTargetPreview(null)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [targetTweetId, replyAccounts])
+
   function insertMediaTokens(ids: number[]) {
     if (ids.length === 0) return
     const tokens = ids.map((id) => `[media:${id}]`).join(' ')
@@ -401,14 +505,20 @@ function PromptForm({
     }
     if (!body.trim()) {
       setError(
-        promptMode === 'manual'
+        promptMode === 'manual' || (promptMode === 'reply' && replySource === 'manual')
           ? 'ใส่ข้อความที่จะโพสต์ก่อนนะคะ'
           : 'ใส่คำสั่งให้ AI ก่อนนะคะ',
       )
       return
     }
+    if (promptMode === 'reply' && !targetTweetId) {
+      setError('เลือกโพสต์ที่จะ reply ก่อนนะคะ')
+      return
+    }
     setSubmitting(true)
     try {
+      const useManualText =
+        promptMode === 'manual' || (promptMode === 'reply' && replySource === 'manual')
       const data = {
         name: name.trim(),
         body: body.trim(),
@@ -417,8 +527,10 @@ function PromptForm({
         decorate_letters: decorateLetters,
         provider,
         model,
-        fallback_text:
-          promptMode === 'manual' ? undefined : fallback.trim() || undefined,
+        fallback_text: useManualText ? undefined : fallback.trim() || undefined,
+        target_tweet_id: promptMode === 'reply' ? targetTweetId : null,
+        reply_repeat_limit: promptMode === 'reply' ? replyRepeatLimit : 0,
+        reply_source: promptMode === 'reply' ? replySource : 'ai',
       }
       const saved = existing
         ? await api.updatePrompt(existing.id, data)
@@ -500,6 +612,203 @@ function PromptForm({
           </button>
         </div>
       </div>
+    )
+  }
+
+  if (promptMode === 'reply') {
+    const activeAccount = replyAccounts.find((a) => a.id === replyAccountId) ?? null
+    return (
+      <form className="modal-form" onSubmit={onSubmit}>
+        <div className="helper-callout">
+          <span style={{ fontSize: 22, lineHeight: 1 }}>💬</span>
+          <span>
+            สไตล์นี้จะ <strong>reply</strong> ไปยังโพสต์เก่าของบัญชีตัวเอง · เลือกบัญชีและโพสต์ต้นทางด้านล่าง
+          </span>
+        </div>
+
+        <label className="field">
+          <span className="field-label-plain">ชื่อสไตล์</span>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="เช่น Reply ข่าวประจำสัปดาห์"
+            autoFocus
+            maxLength={128}
+          />
+        </label>
+
+        <label className="field">
+          <span className="field-label-plain">เลือกบัญชีที่จะ reply</span>
+          <select
+            value={replyAccountId ?? ''}
+            onChange={(e) => {
+              const id = Number(e.target.value)
+              setReplyAccountId(Number.isFinite(id) ? id : null)
+              // Switching account invalidates the previously-picked tweet —
+              // it belongs to the old account's timeline.
+              setTargetTweetId(null)
+              setTargetPreview(null)
+            }}
+          >
+            {replyAccounts.length === 0 && (
+              <option value="">— ยังไม่มีบัญชี —</option>
+            )}
+            {replyAccounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.handle}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="field">
+          <span className="field-label-plain">โพสต์ต้นทาง</span>
+          {targetPreview ? (
+            <div className="tweet-target-card">
+              <div className="tweet-target-text">
+                {targetPreview.is_pinned && (
+                  <span className="tweet-badge tweet-badge-pin">📌</span>
+                )}
+                {targetPreview.text_preview || (
+                  <em style={{ opacity: 0.6 }}>(โพสต์ไม่มีข้อความ)</em>
+                )}
+              </div>
+              <div className="form-actions" style={{ marginTop: 6 }}>
+                <button
+                  type="button"
+                  className="btn-ghost btn-sm"
+                  onClick={() => setTweetPickerOpen(true)}
+                  disabled={replyAccountId === null}
+                >
+                  เปลี่ยน
+                </button>
+                <a
+                  href={targetPreview.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn-ghost btn-sm"
+                  style={{ textDecoration: 'none' }}
+                >
+                  เปิดใน X ↗
+                </a>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => setTweetPickerOpen(true)}
+              disabled={replyAccountId === null}
+            >
+              เลือกโพสต์ที่จะ reply
+            </button>
+          )}
+        </div>
+
+        <label className="field">
+          <span className="field-label-plain">
+            จำกัดจำนวนครั้งที่จะ reply ต่อโพสต์นี้
+          </span>
+          <input
+            type="number"
+            min={0}
+            max={10000}
+            value={replyRepeatLimit}
+            onChange={(e) =>
+              setReplyRepeatLimit(Math.max(0, Number(e.target.value) || 0))
+            }
+          />
+          <span className="muted-note" style={{ marginTop: 4 }}>
+            0 = ไม่จำกัด · ใส่ตัวเลขถ้าอยากให้หยุดเองหลัง reply ครบจำนวน
+          </span>
+        </label>
+
+        <div className="field">
+          <span className="field-label-plain">เนื้อหา reply มาจาก</span>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <label
+              style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}
+            >
+              <input
+                type="radio"
+                name="reply-source"
+                checked={replySource === 'ai'}
+                onChange={() => setReplySource('ai')}
+              />
+              <span>AI สร้างให้</span>
+            </label>
+            <label
+              style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}
+            >
+              <input
+                type="radio"
+                name="reply-source"
+                checked={replySource === 'manual'}
+                onChange={() => setReplySource('manual')}
+              />
+              <span>เขียนเอง</span>
+            </label>
+          </div>
+        </div>
+
+        {replySource === 'manual' ? (
+          <label className="field">
+            <span className="field-label-plain">
+              ข้อความ reply (หลายข้อความคั่นด้วย{' '}
+              <code style={{ background: 'var(--primary-soft)', padding: '1px 6px', borderRadius: 4 }}>
+                ---
+              </code>
+              )
+            </span>
+            <textarea
+              ref={bodyRef}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={6}
+              placeholder={'ขอบคุณทุกคนที่ติดตามครับ\n---\nวันนี้มาต่อยอดเรื่องเดิม...'}
+            />
+          </label>
+        ) : (
+          <>
+            <label className="field">
+              <span className="field-label-plain">คำสั่งให้ AI</span>
+              <textarea
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                rows={5}
+                placeholder="เช่น 'เขียน reply ขยายความโพสต์ต้นทาง ภาษาไทย ความยาวไม่เกิน 200 ตัวอักษร'"
+              />
+            </label>
+
+            <label className="field">
+              <span className="field-label-plain">ใช้ AI ตัวไหน</span>
+              <select
+                value={provider}
+                onChange={(e) => onProviderChange(e.target.value as AiProvider)}
+              >
+                <option value="openai">OpenAI (GPT)</option>
+                <option value="gemini">Google Gemini</option>
+              </select>
+            </label>
+          </>
+        )}
+
+        {error && <div className="form-error">{error}</div>}
+
+        <TweetPickerModal
+          open={tweetPickerOpen}
+          account={activeAccount}
+          selectedTweetId={targetTweetId}
+          onPick={(t) => {
+            setTargetTweetId(t.tweet_id)
+            setTargetPreview(t)
+            setTweetPickerOpen(false)
+          }}
+          onClose={() => setTweetPickerOpen(false)}
+        />
+
+        {renderActions()}
+      </form>
     )
   }
 

@@ -6,6 +6,7 @@ import { EmptyState } from '../components/EmptyState'
 import { Modal } from '../components/Modal'
 import { StylePicker } from '../components/StylePicker'
 import { TestPostModal } from '../components/TestPostModal'
+import { TweetPickerModal } from '../components/TweetPickerModal'
 import { formatHour, formatRelative, formatSeconds } from '../lib/time'
 import {
   api,
@@ -23,6 +24,7 @@ export function Accounts() {
   const [showTest, setShowTest] = useState(false)
   const [settingsOf, setSettingsOf] = useState<XAccountOut | null>(null)
   const [styleOf, setStyleOf] = useState<XAccountOut | null>(null)
+  const [tweetsOf, setTweetsOf] = useState<XAccountOut | null>(null)
   const [pendingDelete, setPendingDelete] = useState<XAccountOut | null>(null)
   const [alert, setAlert] = useState<string | null>(null)
 
@@ -278,6 +280,13 @@ export function Accounts() {
                   <button
                     type="button"
                     className="btn-ghost"
+                    onClick={() => setTweetsOf(acc)}
+                  >
+                    จัดการโพสต์
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost"
                     onClick={() => setSettingsOf(acc)}
                   >
                     ตั้งค่าเวลา
@@ -329,6 +338,17 @@ export function Accounts() {
         currentPromptId={styleOf?.default_prompt_id ?? null}
         onClose={() => setStyleOf(null)}
         onSelected={onAssignStyle}
+      />
+
+      <TweetPickerModal
+        open={tweetsOf !== null}
+        account={tweetsOf}
+        onClose={() => {
+          setTweetsOf(null)
+          // Refresh in case the scan completed while the modal was open —
+          // last_scan_at / scanned_tweet_count get freshened in the list.
+          refresh()
+        }}
       />
 
       <ConfirmDialog

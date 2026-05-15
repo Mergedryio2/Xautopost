@@ -66,6 +66,46 @@ async def post_tweet(
     return result
 
 
+async def post_reply(
+    *,
+    account_id: int,
+    content: str,
+    target_tweet_id: str,
+    media_paths: list[Path] | None = None,
+    window_position: tuple[int, int] | None = None,
+    window_size: tuple[int, int] | None = None,
+    headless: bool = False,
+) -> PostResult:
+    """Reply to a specific tweet of the account's own posts. Navigates to
+    https://x.com/i/web/status/{id} (canonical URL — X redirects to the
+    handle-prefixed form), opens the inline reply composer, types, and
+    submits via the same Cmd/Ctrl+Enter hotkey as post_tweet. The result
+    is logged with reply_to_tweet_id so the scheduler can enforce
+    per-target reply caps."""
+    state, proxy_kwargs = _load_account_state(account_id)
+    if state is None:
+        result = PostResult(ok=False, error="ยังไม่มี session ที่บันทึกไว้")
+        _write_log(
+            account_id, content, result, reply_to_tweet_id=target_tweet_id
+        )
+        return result
+
+    result = await _do_reply(
+        state,
+        content,
+        target_tweet_id,
+        proxy_kwargs,
+        media_paths=media_paths or [],
+        window_position=window_position,
+        window_size=window_size,
+        headless=headless,
+    )
+    _write_log(
+        account_id, content, result, reply_to_tweet_id=target_tweet_id
+    )
+    return result
+
+
 def _load_account_state(
     account_id: int,
 ) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
@@ -89,13 +129,20 @@ def _load_account_state(
         return state, proxy_kwargs
 
 
-def _write_log(account_id: int, content: str, result: PostResult) -> None:
+def _write_log(
+    account_id: int,
+    content: str,
+    result: PostResult,
+    *,
+    reply_to_tweet_id: str | None = None,
+) -> None:
     with SessionLocal() as db:
         row = PostLog(
             x_account_id=account_id,
             content=content,
             status="success" if result.ok else "failed",
             detail=result.error,
+            reply_to_tweet_id=reply_to_tweet_id,
         )
         db.add(row)
         if result.ok:
@@ -356,6 +403,213 @@ async def _attach_media(page, paths: list[Path]) -> str | None:  # type: ignore[
             "อาจเปลี่ยน layout หรือไฟล์ใหญ่เกิน"
         )
     return None
+
+
+async def _do_reply(
+    storage_state: dict[str, Any],
+    content: str,
+    target_tweet_id: str,
+    proxy_kwargs: dict[str, str] | None,
+    media_paths: list[Path],
+    window_position: tuple[int, int] | None = None,
+    window_size: tuple[int, int] | None = None,
+    headless: bool = False,
+) -> PostResult:
+    """Reply flow. The reply composer at /i/web/status/{id} differs from the
+    home composer in two ways: (1) the editor is inline below the parent
+    tweet rather than a modal, so there's no SideNav button + mask overlay
+    to dance around; (2) the page can render a "Sorry, this page doesn't
+    exist" error when the parent tweet was deleted, and we need to catch
+    that before typing into a nonexistent editor. Everything else (focus,
+    type, media, hotkey submit, success polling) reuses the post_tweet
+    patterns."""
+    try:
+        async with async_playwright() as pw:
+            args = ["--disable-blink-features=AutomationControlled"]
+            if window_position is not None:
+                args.append(
+                    f"--window-position={window_position[0]},{window_position[1]}"
+                )
+            if window_size is not None:
+                args.append(
+                    f"--window-size={window_size[0]},{window_size[1]}"
+                )
+            launch_kwargs: dict[str, Any] = {
+                "headless": headless,
+                "args": args,
+            }
+            if proxy_kwargs:
+                launch_kwargs["proxy"] = proxy_kwargs
+
+            try:
+                browser = await pw.chromium.launch(
+                    channel="chrome", **launch_kwargs
+                )
+            except Exception:  # noqa: BLE001
+                browser = await pw.chromium.launch(**launch_kwargs)
+
+            try:
+                context = await browser.new_context(
+                    storage_state=storage_state,
+                    viewport=None,
+                    no_viewport=True,
+                )
+                await context.add_init_script(
+                    "Object.defineProperty(navigator, 'webdriver', "
+                    "{ get: () => undefined })"
+                )
+                page = await context.new_page()
+
+                # Canonical reply URL. X redirects this to the
+                # handle-prefixed form once the page settles — that's fine.
+                await page.goto(
+                    f"https://x.com/i/web/status/{target_tweet_id}",
+                    wait_until="domcontentloaded",
+                )
+
+                # Did the parent tweet vanish? X surfaces this as the
+                # "Hmm...this page doesn't exist" stub. Bail fast so we
+                # don't wait 20s for an editor that will never appear.
+                gone = await _is_target_gone(page)
+                if gone:
+                    return PostResult(
+                        ok=False,
+                        error=(
+                            "โพสต์ต้นทางหายไปแล้ว — "
+                            "อาจถูกลบ, ถูกซ่อน, หรือเข้าถึงไม่ได้"
+                        ),
+                    )
+
+                # Same testid as the home composer ('tweetTextarea_0') —
+                # X reuses the editor component for inline replies. There
+                # may be multiple matches when quote tweets nest, so
+                # .first picks the top-level reply box.
+                editor = page.locator(
+                    '[data-testid="tweetTextarea_0"]'
+                ).first
+                try:
+                    await editor.wait_for(timeout=20_000)
+                except Exception:  # noqa: BLE001
+                    # Could be a permission case (protected target,
+                    # ourselves blocked from replying) or a layout shift.
+                    return PostResult(
+                        ok=False,
+                        error=(
+                            "หา reply editor ไม่เจอ — "
+                            "อาจไม่มีสิทธิ์ reply โพสต์นี้"
+                        ),
+                    )
+
+                # Inline composer doesn't slide in like the modal, but
+                # X still attaches focus-eating overlays during initial
+                # render. Same focus → pause → type pattern works.
+                await editor.focus()
+                await asyncio.sleep(1.5)
+                await page.keyboard.type(content, delay=12)
+                await asyncio.sleep(1.2)
+
+                if media_paths:
+                    upload_err = await _attach_media(page, media_paths)
+                    if upload_err:
+                        return PostResult(ok=False, error=upload_err)
+
+                # Reply button uses a different testid than the main post
+                # button; X renders it as "tweetButtonInline" on the
+                # status page. Fall back to tweetButton if X changes back.
+                button = page.locator(
+                    '[data-testid="tweetButtonInline"]:not([aria-disabled="true"]), '
+                    '[data-testid="tweetButton"]:not([aria-disabled="true"])'
+                ).first
+                button_timeout = 120_000 if media_paths else 20_000
+                await button.wait_for(timeout=button_timeout)
+
+                await page.keyboard.press(_POST_HOTKEY)
+
+                # Polling block — same shape as post_tweet's outcome
+                # detection. The editor either disappears (replaced by the
+                # newly-posted reply card) or clears (X swaps the inline
+                # composer back to a placeholder).
+                for _ in range(24):
+                    await asyncio.sleep(0.5)
+                    err = await _check_for_error(page)
+                    if err:
+                        return PostResult(ok=False, error=err)
+                    try:
+                        if not await editor.is_visible(timeout=100):
+                            return PostResult(ok=True)
+                    except Exception:  # noqa: BLE001
+                        return PostResult(ok=True)
+                    try:
+                        text = (
+                            await editor.text_content(timeout=100)
+                        ) or ""
+                        if text.strip() == "":
+                            return PostResult(ok=True)
+                    except Exception:  # noqa: BLE001
+                        pass
+
+                final_err = await _check_for_error(page)
+                if final_err:
+                    return PostResult(ok=False, error=final_err)
+                try:
+                    final_visible = await editor.is_visible(timeout=200)
+                except Exception:  # noqa: BLE001
+                    return PostResult(ok=True)
+                if not final_visible:
+                    return PostResult(ok=True)
+                try:
+                    final_text = (
+                        await editor.text_content(timeout=200)
+                    ) or ""
+                except Exception:  # noqa: BLE001
+                    return PostResult(ok=True)
+                if final_text.strip():
+                    return PostResult(
+                        ok=False,
+                        error=(
+                            "X ไม่ได้รับ reply (กล่องเขียนยังมีเนื้อหาเดิม) · "
+                            "อาจเป็นเนื้อหาซ้ำ, ติด rate limit, หรือบัญชีถูกจำกัด"
+                        ),
+                    )
+                return PostResult(ok=True)
+            finally:
+                try:
+                    await browser.close()
+                except Exception:  # noqa: BLE001
+                    pass
+    except Exception as e:  # noqa: BLE001
+        log.exception("post_reply failed")
+        return PostResult(ok=False, error=str(e))
+
+
+async def _is_target_gone(page) -> bool:  # type: ignore[no-untyped-def]
+    """X renders a "this page doesn't exist" / "post unavailable" stub when
+    the target tweet was deleted. Cheap probe — 1.5s ceiling — because we
+    don't want to delay the common success path."""
+    # 'empty_state' is X's standard testid for the deleted/unavailable stub.
+    try:
+        loc = page.locator('[data-testid="empty_state_header_text"]').first
+        if await loc.is_visible(timeout=1500):
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    # Belt-and-suspenders: scan for the literal copy in case X changes the
+    # testid. Bounded to one cheap call so it doesn't widen the hot path.
+    try:
+        body_text = await page.locator("body").inner_text(timeout=500)
+        lowered = body_text.lower()
+        for phrase in (
+            "this post is from an account that doesn't exist",
+            "hmm...this page doesn",
+            "post unavailable",
+            "this post was deleted",
+            "this post is unavailable",
+        ):
+            if phrase in lowered:
+                return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
 
 
 async def _check_for_error(page) -> str | None:  # type: ignore[no-untyped-def]

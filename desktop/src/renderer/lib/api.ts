@@ -25,6 +25,9 @@ export type XAccountOut = {
   active_hours_start: number
   active_hours_end: number
   last_post_at: string | null
+  last_scan_at: string | null
+  scan_status: 'idle' | 'running' | 'error'
+  scanned_tweet_count: number
   created_at: string
   // Live: true while the scheduler has Playwright actively driving X.
   // Populated server-side from in-memory tracker, not the database.
@@ -69,7 +72,8 @@ export type ApiKeyOut = {
   created_at: string
 }
 
-export type PromptMode = 'ai' | 'manual'
+export type PromptMode = 'ai' | 'manual' | 'reply'
+export type ReplySource = 'ai' | 'manual'
 
 export type PromptOut = {
   id: number
@@ -81,7 +85,39 @@ export type PromptOut = {
   provider: AiProvider
   model: string
   fallback_text: string | null
+  target_tweet_id: string | null
+  reply_repeat_limit: number
+  reply_source: ReplySource
   created_at: string
+}
+
+export type TweetOut = {
+  id: number
+  tweet_id: string
+  url: string
+  text_preview: string | null
+  has_media: boolean
+  is_reply: boolean
+  is_retweet: boolean
+  is_pinned: boolean
+  posted_at: string | null
+  scraped_at: string
+  deleted_at: string | null
+}
+
+export type ScanStatusOut = {
+  scan_status: 'idle' | 'running' | 'error'
+  last_scan_at: string | null
+  scanned_tweet_count: number
+  scan_error: string | null
+  running: boolean
+  tweets_collected_so_far: number
+}
+
+export type TweetCountOut = {
+  total: number
+  live: number
+  with_media: number
 }
 
 export type GenerateOut = {
@@ -285,6 +321,9 @@ export const api = {
     provider?: AiProvider
     model?: string
     fallback_text?: string
+    target_tweet_id?: string | null
+    reply_repeat_limit?: number
+    reply_source?: ReplySource
   }) =>
     request<PromptOut>('/prompts', {
       method: 'POST',
@@ -301,6 +340,9 @@ export const api = {
       provider: AiProvider
       model: string
       fallback_text: string | null
+      target_tweet_id: string | null
+      reply_repeat_limit: number
+      reply_source: ReplySource
     }>,
   ) =>
     request<PromptOut>(`/prompts/${id}`, {
@@ -357,6 +399,43 @@ export const api = {
     const blob = await res.blob()
     return URL.createObjectURL(blob)
   },
+
+  // Tweet index — list, search, scan trigger, scan status. Backend caps the
+  // returned list at 200 per call; the UI paginates by passing offset.
+  listTweets: (
+    accountId: number,
+    params?: {
+      q?: string
+      has_media?: boolean
+      include_deleted?: boolean
+      limit?: number
+      offset?: number
+    },
+  ) => {
+    const search = new URLSearchParams()
+    if (params?.q) search.set('q', params.q)
+    if (params?.has_media !== undefined)
+      search.set('has_media', String(params.has_media))
+    if (params?.include_deleted) search.set('include_deleted', 'true')
+    if (params?.limit) search.set('limit', String(params.limit))
+    if (params?.offset) search.set('offset', String(params.offset))
+    const qs = search.toString()
+    return request<TweetOut[]>(
+      `/accounts/${accountId}/tweets${qs ? `?${qs}` : ''}`,
+    )
+  },
+  tweetCounts: (accountId: number) =>
+    request<TweetCountOut>(`/accounts/${accountId}/tweets/count`),
+  scanTweets: (accountId: number) =>
+    request<ScanStatusOut>(`/accounts/${accountId}/tweets/scan`, {
+      method: 'POST',
+    }),
+  scanStatus: (accountId: number) =>
+    request<ScanStatusOut>(`/accounts/${accountId}/tweets/scan`),
+  cancelScan: (accountId: number) =>
+    request<void>(`/accounts/${accountId}/tweets/scan/cancel`, {
+      method: 'POST',
+    }),
 
   listLogs: (params?: {
     account_id?: number

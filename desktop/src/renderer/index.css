@@ -2017,3 +2017,137 @@ pre.code {
   background: var(--error-bg, var(--primary-soft));
   color: var(--error-fg, var(--text));
 }
+
+/* Tweet picker — modal-hosted list for browsing / picking tweets that the
+   reply-mode prompt targets. Lives inside a large modal (.modal-card.is-lg). */
+.tweet-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 300px;
+}
+.tweet-picker-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.tweet-picker-search {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 13px;
+  background: var(--card, #fff);
+}
+.tweet-picker-filter {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 13px;
+  background: var(--card, #fff);
+}
+.tweet-picker-status {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 4px 2px;
+}
+.tweet-picker-empty {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.tweet-picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 56vh;
+  overflow-y: auto;
+}
+.tweet-picker-item {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card, #fff);
+  transition: border-color 120ms;
+}
+.tweet-picker-item.is-selected {
+  border-color: var(--lavender);
+  background: var(--lavender-soft);
+}
+.tweet-picker-item.is-deleted {
+  opacity: 0.5;
+}
+.tweet-picker-item-body {
+  flex: 1;
+  min-width: 0;
+}
+.tweet-picker-item-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.tweet-picker-item-preview {
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.tweet-picker-item-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+.tweet-picker-item-meta a {
+  color: var(--muted);
+  text-decoration: none;
+}
+.tweet-picker-item-meta a:hover {
+  text-decoration: underline;
+}
+.tweet-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  background: var(--primary-soft);
+  color: var(--text);
+}
+.tweet-badge-pin {
+  background: var(--lavender);
+}
+.tweet-badge-del {
+  background: #ffd4d4;
+  color: #8a2a2a;
+}
+.tweet-picker-more {
+  display: flex;
+  justify-content: center;
+  padding-top: 6px;
+}
+.tweet-target-card {
+  padding: 10px 12px;
+  border: 1px solid var(--lavender);
+  border-radius: 10px;
+  background: var(--lavender-soft);
+}
+.tweet-target-text {
+  font-size: 13px;
+  line-height: 1.5;
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}

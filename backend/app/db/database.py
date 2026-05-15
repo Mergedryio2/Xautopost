@@ -52,6 +52,7 @@ def init_db() -> None:
     _migrate_x_accounts()
     _migrate_operators()
     _migrate_prompts()
+    _migrate_post_logs()
 
 
 def _drop_legacy_column(conn, table: str, column: str) -> None:  # type: ignore[no-untyped-def]
@@ -73,12 +74,31 @@ def _drop_legacy_column(conn, table: str, column: str) -> None:  # type: ignore[
         log.exception("failed to drop legacy column %s.%s", table, column)
 
 
+def _migrate_post_logs() -> None:
+    """Add reply_to_tweet_id so the scheduler can count replies per target."""
+    new_columns: list[tuple[str, str]] = [
+        ("reply_to_tweet_id", "TEXT DEFAULT NULL"),
+    ]
+    with engine.begin() as conn:
+        cols = conn.execute(text("PRAGMA table_info(post_logs)")).fetchall()
+        existing = {row[1] for row in cols}
+        for name, ddl in new_columns:
+            if name not in existing:
+                conn.execute(
+                    text(f"ALTER TABLE post_logs ADD COLUMN {name} {ddl}")
+                )
+                log.info("migrated: added column post_logs.%s", name)
+
+
 def _migrate_prompts() -> None:
     """Add new columns to prompts if they don't exist."""
     new_columns: list[tuple[str, str]] = [
         ("mode", "TEXT NOT NULL DEFAULT 'ai'"),
         ("decorate_emoji", "BOOLEAN NOT NULL DEFAULT 1"),
         ("decorate_letters", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("target_tweet_id", "TEXT DEFAULT NULL"),
+        ("reply_repeat_limit", "INTEGER NOT NULL DEFAULT 0"),
+        ("reply_source", "TEXT NOT NULL DEFAULT 'ai'"),
     ]
     with engine.begin() as conn:
         cols = conn.execute(text("PRAGMA table_info(prompts)")).fetchall()
@@ -133,6 +153,10 @@ def _migrate_x_accounts() -> None:
         ("max_interval_seconds", "INTEGER NOT NULL DEFAULT 14400"),
         ("active_hours_start", "INTEGER NOT NULL DEFAULT 9"),
         ("active_hours_end", "INTEGER NOT NULL DEFAULT 22"),
+        ("last_scan_at", "DATETIME DEFAULT NULL"),
+        ("scan_status", "TEXT NOT NULL DEFAULT 'idle'"),
+        ("scanned_tweet_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("scan_error", "TEXT DEFAULT NULL"),
     ]
     with engine.begin() as conn:
         cols = conn.execute(text("PRAGMA table_info(x_accounts)")).fetchall()

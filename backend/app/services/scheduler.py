@@ -14,12 +14,13 @@ from sqlalchemy import func, select
 
 from app.core.crypto import get_crypto
 from app.db.database import SessionLocal
-from app.db.models import ApiKey, Operator, PostLog, Prompt, XAccount
+from app.db.models import ApiKey, Operator, PostLog, Prompt, TweetIndex, XAccount
 from app.db.utils import now_local, utcnow
 from app.services.ai import generate_content
 from app.services.manual import apply_decoration, split_manual
 from app.services.media import extract_media_tokens, resolve_media_ids
-from app.services.poster import post_tweet
+from app.services.poster import post_reply, post_tweet
+from app.services.tweet_scanner import scan_manager
 
 log = logging.getLogger(__name__)
 
@@ -180,6 +181,20 @@ class RotationScheduler:
             ops = list(db.scalars(select(Operator)).all())
         for op in ops:
             self._schedule_operator(op.id)
+        # Periodic tweet re-scan. Reply-mode prompts depend on a fresh
+        # index, but we don't want to spawn a Chromium per account per
+        # tick — running every 6 hours catches new tweets in a window
+        # the user will tolerate without burning resources. max_instances=1
+        # prevents a long-running scan round from overlapping with itself.
+        self._scheduler.add_job(
+            self._periodic_rescan,
+            trigger="interval",
+            seconds=6 * 3600,
+            id="periodic_rescan",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
         log.info("scheduler started: %d operator(s)", len(ops))
 
     def shutdown(self) -> None:
@@ -255,6 +270,36 @@ class RotationScheduler:
             await self._do_tick(operator_id)
         except Exception:  # noqa: BLE001
             log.exception("rotation tick failed for operator %s", operator_id)
+
+    async def _periodic_rescan(self) -> None:
+        """Walk every account with a saved session and refresh its tweet
+        index. Runs sequentially so we never have more than one scrape
+        Chromium up at once — scans are headless and the 6-hour cadence
+        gives plenty of headroom even for operators with many accounts."""
+        try:
+            with SessionLocal() as db:
+                ids = list(
+                    db.scalars(
+                        select(XAccount.id).where(
+                            XAccount.storage_state_enc.is_not(None)
+                        )
+                    ).all()
+                )
+        except Exception:  # noqa: BLE001
+            log.exception("periodic rescan: failed to enumerate accounts")
+            return
+
+        for account_id in ids:
+            task = scan_manager.start(account_id)
+            if task.bg_task is None:
+                continue
+            try:
+                await task.bg_task
+            except Exception:  # noqa: BLE001
+                log.exception(
+                    "periodic rescan: scan failed for account %s",
+                    account_id,
+                )
 
     async def _do_tick(self, operator_id: int) -> None:
         """Pick up to (parallel_posts - in_flight) eligible accounts and
@@ -432,8 +477,79 @@ class RotationScheduler:
                 fallback = prompt.fallback_text
                 decorate_emoji = prompt.decorate_emoji
                 decorate_letters = prompt.decorate_letters
+                # Reply-mode fields. `reply_source` decides whether the
+                # reply text comes from the AI prompt body or from the
+                # manual-mode literal text split. The outer `mode` controls
+                # *where* the result is posted (new tweet vs inline reply).
+                target_tweet_id = prompt.target_tweet_id
+                reply_repeat_limit = prompt.reply_repeat_limit
+                reply_source = prompt.reply_source
 
-                if mode == "manual":
+                # Pre-flight checks for reply mode happen here (inside the
+                # same DB session) so we don't burn an AI call only to bail
+                # out when the target is gone.
+                if mode == "reply":
+                    if not target_tweet_id:
+                        _log_skip(
+                            account_id,
+                            "Reply mode ยังไม่ได้เลือกโพสต์ต้นทาง",
+                        )
+                        return
+                    # Verify the target still exists in our index — if a
+                    # subsequent scan marked it deleted, we shouldn't keep
+                    # trying. (Hard 404 on X also gets caught by the
+                    # poster's _is_target_gone check, but skipping here
+                    # avoids the Playwright spin-up cost.)
+                    tweet_row = db.scalar(
+                        select(TweetIndex).where(
+                            TweetIndex.x_account_id == account_id,
+                            TweetIndex.tweet_id == target_tweet_id,
+                        )
+                    )
+                    if tweet_row is None:
+                        _log_skip(
+                            account_id,
+                            f"โพสต์ต้นทาง {target_tweet_id} ไม่อยู่ใน index "
+                            "ของบัญชีนี้ — สแกนใหม่หรือเลือกอันอื่น",
+                        )
+                        return
+                    if tweet_row.deleted_at is not None:
+                        _log_skip(
+                            account_id,
+                            "โพสต์ต้นทางถูกลบไปแล้ว — แก้ไขสไตล์ก่อน",
+                        )
+                        return
+                    # Enforce reply_repeat_limit. 0 = unlimited.
+                    if reply_repeat_limit > 0:
+                        reply_count = (
+                            db.scalar(
+                                select(func.count())
+                                .select_from(PostLog)
+                                .where(
+                                    PostLog.x_account_id == account_id,
+                                    PostLog.reply_to_tweet_id
+                                    == target_tweet_id,
+                                    PostLog.status == "success",
+                                )
+                            )
+                            or 0
+                        )
+                        if reply_count >= reply_repeat_limit:
+                            _log_skip(
+                                account_id,
+                                f"reply ครบ {reply_repeat_limit} ครั้งแล้ว "
+                                f"สำหรับโพสต์ {target_tweet_id}",
+                            )
+                            return
+
+                # Decide which content path runs. For non-reply modes the
+                # outer `mode` is the source; for reply mode the inner
+                # `reply_source` field steers between ai/manual.
+                effective_source = (
+                    reply_source if mode == "reply" else mode
+                )
+
+                if effective_source == "manual":
                     provider = "manual"
                     model = "-"
                     api_key_plain = None
@@ -457,7 +573,7 @@ class RotationScheduler:
                     api_key_plain = get_crypto().decrypt_str(key_row.key_enc)
 
             media_paths: list[Path] = []
-            if mode == "manual":
+            if effective_source == "manual":
                 candidates = split_manual(body)
                 if not candidates:
                     _log_skip(
@@ -507,14 +623,25 @@ class RotationScheduler:
             # parallel windows land in a deterministic grid. Each task
             # posts independently the moment its own prep is ready.
             x, y, w, h = _slot_position(slot_idx, total_slots)
-            await post_tweet(
-                account_id=account_id,
-                content=content,
-                media_paths=media_paths or None,
-                window_position=(x, y),
-                window_size=(w, h),
-                headless=False,
-            )
+            if mode == "reply":
+                await post_reply(
+                    account_id=account_id,
+                    content=content,
+                    target_tweet_id=target_tweet_id,  # type: ignore[arg-type]
+                    media_paths=media_paths or None,
+                    window_position=(x, y),
+                    window_size=(w, h),
+                    headless=False,
+                )
+            else:
+                await post_tweet(
+                    account_id=account_id,
+                    content=content,
+                    media_paths=media_paths or None,
+                    window_position=(x, y),
+                    window_size=(w, h),
+                    headless=False,
+                )
         except Exception:  # noqa: BLE001
             log.exception("post task failed for account %s", account_id)
         finally:

@@ -36,6 +36,9 @@ class XAccountOut(BaseModel):
     active_hours_start: int
     active_hours_end: int
     last_post_at: datetime | None
+    last_scan_at: datetime | None = None
+    scan_status: str = "idle"
+    scanned_tweet_count: int = 0
     created_at: datetime
     # Live state — populated from in-memory scheduler tracker, not the DB.
     is_posting: bool = False

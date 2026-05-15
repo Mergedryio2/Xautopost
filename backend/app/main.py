@@ -9,11 +9,11 @@ from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.api import accounts, api_keys, logs, media, operators, prompts, proxies
+from app.api import accounts, api_keys, logs, media, operators, prompts, proxies, tweets
 from app.db.database import init_db
 from app.services.scheduler import scheduler
 
-VERSION = "0.0.20"
+VERSION = "0.1.0"
 PORT = int(os.environ.get("XAUTOPOST_PORT", "8765"))
 TOKEN = os.environ.get("XAUTOPOST_TOKEN", "")
 
@@ -70,6 +70,7 @@ app.include_router(api_keys.router, dependencies=[Depends(require_token)])
 app.include_router(prompts.router, dependencies=[Depends(require_token)])
 app.include_router(media.router, dependencies=[Depends(require_token)])
 app.include_router(logs.router, dependencies=[Depends(require_token)])
+app.include_router(tweets.router, dependencies=[Depends(require_token)])
 
 
 def run() -> None:
