@@ -32,6 +32,10 @@ export type XAccountOut = {
   // Live: true while the scheduler has Playwright actively driving X.
   // Populated server-side from in-memory tracker, not the database.
   is_posting: boolean
+  // Live: true while the tweet scanner is actively scraping this account.
+  // scan_progress = number of tweets collected so far in the in-flight scan.
+  is_scanning: boolean
+  scan_progress: number
 }
 
 export type XAccountUpdate = Partial<{

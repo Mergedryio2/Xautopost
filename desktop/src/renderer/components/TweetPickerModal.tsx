@@ -145,14 +145,23 @@ export function TweetPickerModal({
     }
   }
 
+  async function onCancelScan() {
+    if (accountId === null) return
+    try {
+      await api.cancelScan(accountId)
+      // Don't optimistically clear scanStatus — the poll picks up the
+      // transition once the background task notices the cancel event.
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   const titleSuffix = account?.handle ? ` · ${account.handle}` : ''
   const isPicker = typeof onPick === 'function'
   const scanning = scanStatus?.running ?? false
 
-  const scanLabel = useMemo(() => {
+  const idleLabel = useMemo(() => {
     if (!scanStatus) return 'ยังไม่เคยสแกน'
-    if (scanStatus.running)
-      return `กำลังสแกน… (${scanStatus.tweets_collected_so_far} โพสต์)`
     if (scanStatus.scan_status === 'error')
       return `สแกนล้มเหลว · ${scanStatus.scan_error ?? 'ไม่ทราบสาเหตุ'}`
     if (scanStatus.last_scan_at)
@@ -196,7 +205,33 @@ export function TweetPickerModal({
           </button>
         </div>
 
-        <div className="tweet-picker-status">{scanLabel}</div>
+        {scanning ? (
+          <div className="scan-banner">
+            <span className="scan-banner-dots">
+              <span /><span /><span />
+            </span>
+            <div className="scan-banner-text">
+              <div className="scan-banner-title">
+                กำลังสแกนโพสต์ของบัญชีนี้…
+              </div>
+              <div className="scan-banner-count">
+                {scanStatus?.tweets_collected_so_far ?? 0} โพสต์
+              </div>
+              <div className="scan-banner-sub">
+                ไม่ต้องรอ · ปิดหน้าต่างนี้ได้ ระบบจะสแกนต่อในเบื้องหลัง
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn-ghost btn-sm"
+              onClick={onCancelScan}
+            >
+              หยุดสแกน
+            </button>
+          </div>
+        ) : (
+          <div className="tweet-picker-status">{idleLabel}</div>
+        )}
 
         {error && <div className="form-error">{error}</div>}
 

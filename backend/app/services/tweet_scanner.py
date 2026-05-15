@@ -143,6 +143,26 @@ class ScanManager:
 scan_manager = ScanManager()
 
 
+def is_scanning(account_id: int) -> bool:
+    """True while a scan task is actively running for this account. Used by
+    the accounts API to surface a live indicator on the row without an
+    extra round-trip to the scan-status endpoint."""
+    task = scan_manager.get(account_id)
+    if task is None or task.status != "running":
+        return False
+    bg = task.bg_task
+    return bg is not None and not bg.done()
+
+
+def scan_progress_for(account_id: int) -> int:
+    """Number of tweets the running scan has collected so far. Returns 0
+    when no scan is in flight."""
+    task = scan_manager.get(account_id)
+    if task is None or task.status != "running":
+        return 0
+    return task.tweets_collected
+
+
 def _load_account(
     account_id: int,
 ) -> tuple[dict[str, Any] | None, dict[str, str] | None, str | None]:

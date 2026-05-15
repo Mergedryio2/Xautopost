@@ -49,6 +49,23 @@ export function Accounts() {
     refresh()
   }, [])
 
+  // Light poll while any account has a scan running so the badge counter
+  // ticks up live. Stops polling when no scans are active to avoid burning
+  // network on an idle page. 2s matches the modal's internal poll cadence.
+  const anyScanning = accounts.some((a) => a.is_scanning)
+  useEffect(() => {
+    if (!anyScanning) return
+    const iv = setInterval(() => {
+      api
+        .listAccounts()
+        .then((rows) => setAccounts(rows))
+        .catch(() => {
+          /* transient — next tick retries */
+        })
+    }, 2000)
+    return () => clearInterval(iv)
+  }, [anyScanning])
+
   function promptFor(acc: XAccountOut): PromptOut | undefined {
     if (acc.default_prompt_id == null) return undefined
     return prompts.find((p) => p.id === acc.default_prompt_id)
@@ -182,6 +199,14 @@ export function Accounts() {
                         <span>โพสต์ล่าสุด {formatRelative(lastAt)}</span>
                       ) : (
                         <span>ยังไม่เคยโพสต์</span>
+                      )}
+                      {acc.is_scanning && (
+                        <span className="scan-badge">
+                          <span className="scan-badge-dots">
+                            <span /><span /><span />
+                          </span>
+                          กำลังสแกน {acc.scan_progress} โพสต์
+                        </span>
                       )}
                     </div>
                   </div>

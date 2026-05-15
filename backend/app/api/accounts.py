@@ -16,6 +16,7 @@ from app.services.media import resolve_media_ids
 from app.services.playwright_login import login_manager
 from app.services.poster import post_tweet
 from app.services.scheduler import is_posting, scheduler
+from app.services.tweet_scanner import is_scanning, scan_progress_for
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
@@ -42,11 +43,18 @@ class XAccountOut(BaseModel):
     created_at: datetime
     # Live state — populated from in-memory scheduler tracker, not the DB.
     is_posting: bool = False
+    # Live state — populated from the in-memory ScanManager so the UI can
+    # show a "scanning N tweets" badge on the account row in real time
+    # without an extra /scan polling request per account.
+    is_scanning: bool = False
+    scan_progress: int = 0
 
 
 def _enrich(acc: XAccount) -> XAccountOut:
     out = XAccountOut.model_validate(acc)
     out.is_posting = is_posting(acc.id)
+    out.is_scanning = is_scanning(acc.id)
+    out.scan_progress = scan_progress_for(acc.id)
     return out
 
 
