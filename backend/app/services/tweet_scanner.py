@@ -80,12 +80,31 @@ class ScanManager:
         return self._tasks.get(account_id)
 
     def start(self, account_id: int) -> ScanTask:
+        # Don't return an existing task unless its bg_task actually exists —
+        # a previous start() that failed mid-flight (e.g. create_task raised
+        # because the endpoint was sync and ran without a loop) leaves a
+        # phantom ScanTask in status='running' with bg_task=None. Treating
+        # that as "still running" would lock the user out of retrying.
         existing = self._tasks.get(account_id)
-        if existing is not None and existing.status == "running":
+        if (
+            existing is not None
+            and existing.status == "running"
+            and existing.bg_task is not None
+            and not existing.bg_task.done()
+        ):
             return existing
+
         task = ScanTask(account_id=account_id)
         self._tasks[account_id] = task
-        task.bg_task = asyncio.create_task(self._run(task))
+        try:
+            task.bg_task = asyncio.create_task(self._run(task))
+        except RuntimeError:
+            # No running event loop (e.g. caller is a sync FastAPI endpoint
+            # invoked in a threadpool worker). Drop the half-built entry so
+            # the caller's next attempt can start fresh, and surface the
+            # underlying error rather than silently leaving a ghost task.
+            self._tasks.pop(account_id, None)
+            raise
         return task
 
     def cancel(self, account_id: int) -> bool:

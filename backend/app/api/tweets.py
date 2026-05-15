@@ -60,7 +60,7 @@ def _owned_account(
 @router.post(
     "/scan", response_model=ScanStatusOut, status_code=status.HTTP_202_ACCEPTED
 )
-def trigger_scan(
+async def trigger_scan(
     account_id: int,
     op: Annotated[Operator, Depends(get_current_operator)],
     db: Annotated[Session, Depends(get_db)],
