@@ -9,6 +9,7 @@ import {
   type PromptMode,
   type PromptOut,
   type ReplySource,
+  type ReplyTargetMode,
   type TweetOut,
   type XAccountOut,
 } from '../lib/api'
@@ -87,11 +88,17 @@ const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash'
 
 export function StylePicker({
   open,
+  slot = 'post',
   currentPromptId,
   onClose,
   onSelected,
 }: {
   open: boolean
+  // 'post' = main rotation (ai/manual prompts), 'reply' = reply slot
+  // (reply prompts only). When picking from "ตั้ง reply" the picker
+  // filters existing prompts AND the templates to mode='reply' so the
+  // user can't accidentally land a post-style in the reply slot.
+  slot?: 'post' | 'reply'
   currentPromptId: number | null
   onClose: () => void
   onSelected: (promptId: number) => void
@@ -159,14 +166,27 @@ export function StylePicker({
     setMode('pick')
   }
 
+  // Slot-aware filters. The "post" slot rotates new tweets, so only
+  // ai/manual prompts belong here. The "reply" slot only takes reply-mode
+  // prompts — assigning a post-style there would just sit dormant forever.
+  const visiblePrompts = prompts.filter((p) =>
+    slot === 'reply' ? p.mode === 'reply' : p.mode !== 'reply',
+  )
+  const visibleTemplates = TEMPLATES.filter((t) =>
+    slot === 'reply' ? t.mode === 'reply' : t.mode !== 'reply',
+  )
+
   const title =
     mode === 'pick'
-      ? 'เลือกสไตล์การเขียน'
+      ? slot === 'reply'
+        ? 'เลือกสไตล์ Reply'
+        : 'เลือกสไตล์การเขียน'
       : editing
         ? 'แก้ไขสไตล์'
         : 'ตั้งสไตล์ใหม่'
 
-  const hasManualOnly = prompts.some((p) => p.mode === 'manual') && keys.length === 0
+  const hasManualOnly =
+    visiblePrompts.some((p) => p.mode === 'manual') && keys.length === 0
 
   return (
     <Modal open={open} onClose={onClose} title={title}>
@@ -186,11 +206,11 @@ export function StylePicker({
             </div>
           )}
 
-          {prompts.length > 0 && (
+          {visiblePrompts.length > 0 && (
             <div className="field">
               <span className="field-label-plain">สไตล์ที่มีอยู่แล้ว</span>
               <div className="card-list">
-                {prompts.map((p) => (
+                {visiblePrompts.map((p) => (
                   <article
                     key={p.id}
                     className="row-card row-card-pick"
@@ -282,7 +302,7 @@ export function StylePicker({
           <div className="field">
             <span className="field-label-plain">หรือสร้างสไตล์ใหม่</span>
             <div className="style-template-grid">
-              {TEMPLATES.map((t) => (
+              {visibleTemplates.map((t) => (
                 <button
                   type="button"
                   key={t.name}
@@ -381,6 +401,12 @@ function PromptForm({
   )
   const [targetTweetId, setTargetTweetId] = useState<string | null>(
     existing?.target_tweet_id ?? null,
+  )
+  const [replyTargetMode, setReplyTargetMode] = useState<ReplyTargetMode>(
+    existing?.reply_target_mode ?? 'single',
+  )
+  const [replyTargetCount, setReplyTargetCount] = useState<number>(
+    existing?.reply_target_count ?? 5,
   )
   // The tweet picker browses one account at a time. Default to the first
   // account; reset whenever the modal opens for an existing prompt by
@@ -511,8 +537,20 @@ function PromptForm({
       )
       return
     }
-    if (promptMode === 'reply' && !targetTweetId) {
+    if (
+      promptMode === 'reply' &&
+      replyTargetMode === 'single' &&
+      !targetTweetId
+    ) {
       setError('เลือกโพสต์ที่จะ reply ก่อนนะคะ')
+      return
+    }
+    if (
+      promptMode === 'reply' &&
+      replyTargetMode === 'latest_n' &&
+      replyTargetCount < 1
+    ) {
+      setError('จำนวนโพสต์ต้องอย่างน้อย 1')
       return
     }
     setSubmitting(true)
@@ -528,9 +566,15 @@ function PromptForm({
         provider,
         model,
         fallback_text: useManualText ? undefined : fallback.trim() || undefined,
-        target_tweet_id: promptMode === 'reply' ? targetTweetId : null,
+        target_tweet_id:
+          promptMode === 'reply' && replyTargetMode === 'single'
+            ? targetTweetId
+            : null,
         reply_repeat_limit: promptMode === 'reply' ? replyRepeatLimit : 0,
         reply_source: promptMode === 'reply' ? replySource : 'ai',
+        reply_target_mode: promptMode === 'reply' ? replyTargetMode : 'single',
+        reply_target_count:
+          promptMode === 'reply' ? Math.max(1, replyTargetCount) : 5,
       }
       const saved = existing
         ? await api.updatePrompt(existing.id, data)
@@ -662,52 +706,151 @@ function PromptForm({
         </label>
 
         <div className="field">
-          <span className="field-label-plain">โพสต์ต้นทาง</span>
-          {targetPreview ? (
-            <div className="tweet-target-card">
-              <div className="tweet-target-text">
-                {targetPreview.is_pinned && (
-                  <span className="tweet-badge tweet-badge-pin">📌</span>
-                )}
-                {targetPreview.text_preview || (
-                  <em style={{ opacity: 0.6 }}>(โพสต์ไม่มีข้อความ)</em>
-                )}
-              </div>
-              <div className="form-actions" style={{ marginTop: 6 }}>
-                <button
-                  type="button"
-                  className="btn-ghost btn-sm"
-                  onClick={() => setTweetPickerOpen(true)}
-                  disabled={replyAccountId === null}
-                >
-                  เปลี่ยน
-                </button>
-                <a
-                  href={targetPreview.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="btn-ghost btn-sm"
-                  style={{ textDecoration: 'none' }}
-                >
-                  เปิดใน X ↗
-                </a>
-              </div>
-            </div>
-          ) : (
-            <button
-              type="button"
-              className="btn-ghost"
-              onClick={() => setTweetPickerOpen(true)}
-              disabled={replyAccountId === null}
+          <span className="field-label-plain">จะ reply โพสต์ไหน</span>
+          <div className="target-mode-row">
+            <label
+              className={
+                'target-mode-card' +
+                (replyTargetMode === 'single' ? ' is-active' : '')
+              }
             >
-              เลือกโพสต์ที่จะ reply
-            </button>
-          )}
+              <input
+                type="radio"
+                name="reply-target-mode"
+                checked={replyTargetMode === 'single'}
+                onChange={() => setReplyTargetMode('single')}
+              />
+              <div>
+                <div className="target-mode-title">เลือกโพสต์เดียว</div>
+                <div className="target-mode-sub">
+                  รีพลายโพสต์ที่กำหนดซ้ำๆ
+                </div>
+              </div>
+            </label>
+            <label
+              className={
+                'target-mode-card' +
+                (replyTargetMode === 'latest_n' ? ' is-active' : '')
+              }
+            >
+              <input
+                type="radio"
+                name="reply-target-mode"
+                checked={replyTargetMode === 'latest_n'}
+                onChange={() => setReplyTargetMode('latest_n')}
+              />
+              <div>
+                <div className="target-mode-title">N โพสต์ล่าสุด</div>
+                <div className="target-mode-sub">
+                  หมุนเวียน N ตัวที่เพิ่งโพสต์
+                </div>
+              </div>
+            </label>
+            <label
+              className={
+                'target-mode-card' +
+                (replyTargetMode === 'all' ? ' is-active' : '')
+              }
+            >
+              <input
+                type="radio"
+                name="reply-target-mode"
+                checked={replyTargetMode === 'all'}
+                onChange={() => setReplyTargetMode('all')}
+              />
+              <div>
+                <div className="target-mode-title">ทุกโพสต์</div>
+                <div className="target-mode-sub">
+                  หมุนเวียนทุกโพสต์ใน index
+                </div>
+              </div>
+            </label>
+          </div>
+          <span className="muted-note" style={{ marginTop: 6, display: 'block' }}>
+            ทุก mode: ระบบจะหมุนเวียน reply ตัวที่ <strong>โดน reply น้อยที่สุด</strong>{' '}
+            ก่อน (กระจายให้สมดุล)
+          </span>
         </div>
+
+        {replyTargetMode === 'latest_n' && (
+          <label className="field">
+            <span className="field-label-plain">
+              จำนวนโพสต์ล่าสุดที่จะหมุนเวียน
+            </span>
+            <input
+              type="number"
+              min={1}
+              max={3200}
+              value={replyTargetCount}
+              onChange={(e) =>
+                setReplyTargetCount(Math.max(1, Number(e.target.value) || 1))
+              }
+            />
+            <span className="muted-note" style={{ marginTop: 4 }}>
+              เช่น 10 = เอา 10 โพสต์ล่าสุด แล้วหมุน reply วนไปเรื่อยๆ
+            </span>
+          </label>
+        )}
+
+        {replyTargetMode === 'single' && (
+          <div className="field">
+            <span className="field-label-plain">โพสต์ต้นทาง</span>
+            {targetPreview ? (
+              <div className="tweet-target-card">
+                <div className="tweet-target-text">
+                  {targetPreview.is_pinned && (
+                    <span className="tweet-badge tweet-badge-pin">📌</span>
+                  )}
+                  {targetPreview.text_preview || (
+                    <em style={{ opacity: 0.6 }}>(โพสต์ไม่มีข้อความ)</em>
+                  )}
+                </div>
+                <div className="form-actions" style={{ marginTop: 6 }}>
+                  <button
+                    type="button"
+                    className="btn-ghost btn-sm"
+                    onClick={() => setTweetPickerOpen(true)}
+                    disabled={replyAccountId === null}
+                  >
+                    เปลี่ยน
+                  </button>
+                  <a
+                    href={targetPreview.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-ghost btn-sm"
+                    style={{ textDecoration: 'none' }}
+                  >
+                    เปิดใน X ↗
+                  </a>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => setTweetPickerOpen(true)}
+                disabled={replyAccountId === null}
+              >
+                เลือกโพสต์ที่จะ reply
+              </button>
+            )}
+          </div>
+        )}
+
+        {replyTargetMode === 'all' && (
+          <div className="helper-callout">
+            <span style={{ fontSize: 22, lineHeight: 1 }}>♾️</span>
+            <span>
+              ระบบจะ reply <strong>ทุกโพสต์</strong> ของบัญชีที่อยู่ใน index ·{' '}
+              สแกนใหม่ก่อนจะดีที่สุดเพื่อให้ครอบคลุม
+            </span>
+          </div>
+        )}
 
         <label className="field">
           <span className="field-label-plain">
-            จำกัดจำนวนครั้งที่จะ reply ต่อโพสต์นี้
+            จำกัดจำนวนครั้งที่จะ reply <strong>ต่อ 1 โพสต์</strong>
           </span>
           <input
             type="number"
@@ -719,7 +862,7 @@ function PromptForm({
             }
           />
           <span className="muted-note" style={{ marginTop: 4 }}>
-            0 = ไม่จำกัด · ใส่ตัวเลขถ้าอยากให้หยุดเองหลัง reply ครบจำนวน
+            0 = ไม่จำกัด · เช่น 3 = reply โพสต์เดิมไม่เกิน 3 ครั้ง แล้วข้ามไปโพสต์ถัดไป
           </span>
         </label>
 

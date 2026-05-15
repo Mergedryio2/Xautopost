@@ -19,12 +19,14 @@ export type XAccountOut = {
   // 0 = unlimited (no daily ceiling).
   daily_limit: number
   default_prompt_id: number | null
+  reply_prompt_id: number | null
   posting_enabled: boolean
   min_interval_seconds: number
   max_interval_seconds: number
   active_hours_start: number
   active_hours_end: number
   last_post_at: string | null
+  reply_last_run_at: string | null
   last_scan_at: string | null
   scan_status: 'idle' | 'running' | 'error'
   scanned_tweet_count: number
@@ -40,6 +42,7 @@ export type XAccountOut = {
 
 export type XAccountUpdate = Partial<{
   default_prompt_id: number | null
+  reply_prompt_id: number | null
   posting_enabled: boolean
   daily_limit: number
   min_interval_seconds: number
@@ -78,6 +81,7 @@ export type ApiKeyOut = {
 
 export type PromptMode = 'ai' | 'manual' | 'reply'
 export type ReplySource = 'ai' | 'manual'
+export type ReplyTargetMode = 'single' | 'latest_n' | 'all'
 
 export type PromptOut = {
   id: number
@@ -92,6 +96,8 @@ export type PromptOut = {
   target_tweet_id: string | null
   reply_repeat_limit: number
   reply_source: ReplySource
+  reply_target_mode: ReplyTargetMode
+  reply_target_count: number
   created_at: string
 }
 
@@ -328,6 +334,8 @@ export const api = {
     target_tweet_id?: string | null
     reply_repeat_limit?: number
     reply_source?: ReplySource
+    reply_target_mode?: ReplyTargetMode
+    reply_target_count?: number
   }) =>
     request<PromptOut>('/prompts', {
       method: 'POST',
@@ -347,6 +355,8 @@ export const api = {
       target_tweet_id: string | null
       reply_repeat_limit: number
       reply_source: ReplySource
+      reply_target_mode: ReplyTargetMode
+      reply_target_count: number
     }>,
   ) =>
     request<PromptOut>(`/prompts/${id}`, {

@@ -31,12 +31,14 @@ class XAccountOut(BaseModel):
     daily_limit: int
     proxy_id: int | None
     default_prompt_id: int | None
+    reply_prompt_id: int | None = None
     posting_enabled: bool
     min_interval_seconds: int
     max_interval_seconds: int
     active_hours_start: int
     active_hours_end: int
     last_post_at: datetime | None
+    reply_last_run_at: datetime | None = None
     last_scan_at: datetime | None = None
     scan_status: str = "idle"
     scanned_tweet_count: int = 0
@@ -60,6 +62,7 @@ def _enrich(acc: XAccount) -> XAccountOut:
 
 class XAccountUpdate(BaseModel):
     default_prompt_id: int | None = None
+    reply_prompt_id: int | None = None
     posting_enabled: bool | None = None
     # 0 = unlimited; otherwise a daily ceiling.
     daily_limit: int | None = Field(default=None, ge=0, le=100000)
@@ -103,6 +106,26 @@ def update_account(
         p = db.get(Prompt, data["default_prompt_id"])
         if p is None or p.operator_id != op.id:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "prompt not found")
+        # Slot mismatch is a usage error the UI should prevent — but
+        # surface a clear message if the user calls the API directly.
+        if p.mode == "reply":
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "ช่องโพสต์ใหม่ต้องเป็นสไตล์โหมด ai หรือ manual — "
+                "สไตล์ reply ไปอยู่ช่อง reply แทน",
+            )
+
+    if data.get("reply_prompt_id") is not None:
+        rp = db.get(Prompt, data["reply_prompt_id"])
+        if rp is None or rp.operator_id != op.id:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, "reply prompt not found"
+            )
+        if rp.mode != "reply":
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "ช่อง reply ต้องเป็นสไตล์โหมด reply เท่านั้น",
+            )
 
     if data.get("proxy_id") is not None:
         proxy = db.get(Proxy, data["proxy_id"])

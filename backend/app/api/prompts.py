@@ -35,6 +35,8 @@ class PromptOut(BaseModel):
     target_tweet_id: str | None
     reply_repeat_limit: int
     reply_source: str
+    reply_target_mode: str
+    reply_target_count: int
     created_at: datetime
 
 
@@ -52,6 +54,10 @@ class PromptCreate(BaseModel):
     )
     reply_repeat_limit: int = Field(default=0, ge=0, le=10000)
     reply_source: str = Field(default="ai", pattern=r"^(ai|manual)$")
+    reply_target_mode: str = Field(
+        default="single", pattern=r"^(single|latest_n|all)$"
+    )
+    reply_target_count: int = Field(default=5, ge=1, le=3200)
 
 
 class PromptUpdate(BaseModel):
@@ -68,6 +74,10 @@ class PromptUpdate(BaseModel):
     )
     reply_repeat_limit: int | None = Field(default=None, ge=0, le=10000)
     reply_source: str | None = Field(default=None, pattern=r"^(ai|manual)$")
+    reply_target_mode: str | None = Field(
+        default=None, pattern=r"^(single|latest_n|all)$"
+    )
+    reply_target_count: int | None = Field(default=None, ge=1, le=3200)
 
 
 class GenerateOut(BaseModel):
@@ -113,6 +123,8 @@ def create_prompt(
         target_tweet_id=payload.target_tweet_id,
         reply_repeat_limit=payload.reply_repeat_limit,
         reply_source=payload.reply_source,
+        reply_target_mode=payload.reply_target_mode,
+        reply_target_count=payload.reply_target_count,
     )
     db.add(p)
     db.commit()

@@ -99,6 +99,8 @@ def _migrate_prompts() -> None:
         ("target_tweet_id", "TEXT DEFAULT NULL"),
         ("reply_repeat_limit", "INTEGER NOT NULL DEFAULT 0"),
         ("reply_source", "TEXT NOT NULL DEFAULT 'ai'"),
+        ("reply_target_mode", "TEXT NOT NULL DEFAULT 'single'"),
+        ("reply_target_count", "INTEGER NOT NULL DEFAULT 5"),
     ]
     with engine.begin() as conn:
         cols = conn.execute(text("PRAGMA table_info(prompts)")).fetchall()
@@ -157,6 +159,11 @@ def _migrate_x_accounts() -> None:
         ("scan_status", "TEXT NOT NULL DEFAULT 'idle'"),
         ("scanned_tweet_count", "INTEGER NOT NULL DEFAULT 0"),
         ("scan_error", "TEXT DEFAULT NULL"),
+        (
+            "reply_prompt_id",
+            "INTEGER REFERENCES prompts(id) ON DELETE SET NULL",
+        ),
+        ("reply_last_run_at", "DATETIME DEFAULT NULL"),
     ]
     with engine.begin() as conn:
         cols = conn.execute(text("PRAGMA table_info(x_accounts)")).fetchall()

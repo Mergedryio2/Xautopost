@@ -61,6 +61,15 @@ class XAccount(Base):
     default_prompt_id: Mapped[int | None] = mapped_column(
         ForeignKey("prompts.id", ondelete="SET NULL"), default=None
     )
+    # Independent reply-mode slot. An account can have a posting prompt
+    # (default_prompt_id) AND a reply prompt active at the same time; the
+    # scheduler dispatches them as independent jobs each tick, gated by
+    # their own last-run timestamps. reply_prompt_id must reference a
+    # Prompt with mode='reply'.
+    reply_prompt_id: Mapped[int | None] = mapped_column(
+        ForeignKey("prompts.id", ondelete="SET NULL"), default=None
+    )
+    reply_last_run_at: Mapped[datetime | None] = mapped_column(default=None)
     posting_enabled: Mapped[bool] = mapped_column(default=False)
     # Per-account spacing in *seconds*. Scheduler picks a uniform random
     # target in [min, max] and refuses to post the same account again until
@@ -130,6 +139,16 @@ class Prompt(Base):
     target_tweet_id: Mapped[str | None] = mapped_column(String(32), default=None)
     reply_repeat_limit: Mapped[int] = mapped_column(default=0)
     reply_source: Mapped[str] = mapped_column(String(16), default="ai")
+    # Multi-target reply selection:
+    #   'single'    — use target_tweet_id (back-compat with v0.1.x)
+    #   'latest_n'  — rotate across the N most-recent indexed tweets, count
+    #                 controlled by reply_target_count
+    #   'all'       — rotate across every live tweet in the index for the
+    #                 owning account (subject to the X cap of ~3200)
+    # Round-robin: each tick the scheduler picks the candidate with the
+    # fewest past successful replies, ties broken by oldest posted_at.
+    reply_target_mode: Mapped[str] = mapped_column(String(16), default="single")
+    reply_target_count: Mapped[int] = mapped_column(default=5)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 

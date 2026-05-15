@@ -23,7 +23,11 @@ export function Accounts() {
   const [showAdd, setShowAdd] = useState(false)
   const [showTest, setShowTest] = useState(false)
   const [settingsOf, setSettingsOf] = useState<XAccountOut | null>(null)
-  const [styleOf, setStyleOf] = useState<XAccountOut | null>(null)
+  // When a row's style picker opens, remember which slot the click targets
+  // so the picker can route saves to the right column.
+  const [styleOf, setStyleOf] = useState<
+    { acc: XAccountOut; slot: 'post' | 'reply' } | null
+  >(null)
   const [tweetsOf, setTweetsOf] = useState<XAccountOut | null>(null)
   const [pendingDelete, setPendingDelete] = useState<XAccountOut | null>(null)
   const [alert, setAlert] = useState<string | null>(null)
@@ -66,14 +70,24 @@ export function Accounts() {
     return () => clearInterval(iv)
   }, [anyScanning])
 
-  function promptFor(acc: XAccountOut): PromptOut | undefined {
+  function postPromptFor(acc: XAccountOut): PromptOut | undefined {
     if (acc.default_prompt_id == null) return undefined
     return prompts.find((p) => p.id === acc.default_prompt_id)
   }
+  function replyPromptFor(acc: XAccountOut): PromptOut | undefined {
+    if (acc.reply_prompt_id == null) return undefined
+    return prompts.find((p) => p.id === acc.reply_prompt_id)
+  }
 
   async function onTogglePosting(acc: XAccountOut, checked: boolean) {
-    if (checked && acc.default_prompt_id === null) {
-      setAlert('ตั้งสไตล์การเขียนให้บัญชีนี้ก่อนเปิดใช้งานนะคะ')
+    if (
+      checked &&
+      acc.default_prompt_id === null &&
+      acc.reply_prompt_id === null
+    ) {
+      setAlert(
+        'ตั้งสไตล์การเขียน (โพสต์ใหม่หรือ reply อย่างน้อยอย่างหนึ่ง) ก่อนเปิดใช้งานนะคะ',
+      )
       return
     }
     try {
@@ -100,14 +114,43 @@ export function Accounts() {
 
   async function onAssignStyle(promptId: number) {
     if (!styleOf) return
+    // Always look up the prompt's mode so we route to the correct slot
+    // regardless of which button the user clicked — picking a reply prompt
+    // from the post-slot picker (or vice-versa) silently lands in the
+    // right column. The picker pre-filters by slot but this is belt-and-
+    // suspenders against any edge-case mismatch.
+    const ps = await api.listPrompts()
+    setPrompts(ps)
+    const picked = ps.find((p) => p.id === promptId)
+    const targetSlot: 'post' | 'reply' =
+      picked?.mode === 'reply' ? 'reply' : 'post'
+    const patch: Partial<{
+      default_prompt_id: number | null
+      reply_prompt_id: number | null
+    }> = {}
+    if (targetSlot === 'reply') {
+      patch.reply_prompt_id = promptId
+    } else {
+      patch.default_prompt_id = promptId
+    }
     try {
-      const updated = await api.updateAccount(styleOf.id, {
-        default_prompt_id: promptId,
+      const updated = await api.updateAccount(styleOf.acc.id, patch)
+      setAccounts((prev) =>
+        prev.map((a) => (a.id === updated.id ? updated : a)),
+      )
+    } catch (e) {
+      setAlert(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function onClearReplySlot(acc: XAccountOut) {
+    try {
+      const updated = await api.updateAccount(acc.id, {
+        reply_prompt_id: null,
       })
-      setAccounts((prev) => prev.map((a) => (a.id === updated.id ? updated : a)))
-      // refresh prompts in case a new one was just created
-      const ps = await api.listPrompts()
-      setPrompts(ps)
+      setAccounts((prev) =>
+        prev.map((a) => (a.id === updated.id ? updated : a)),
+      )
     } catch (e) {
       setAlert(e instanceof Error ? e.message : String(e))
     }
@@ -176,8 +219,14 @@ export function Accounts() {
       ) : (
         <div className="card-list">
           {accounts.map((acc) => {
-            const prompt = promptFor(acc)
-            const lastAt = acc.last_post_at
+            const postPrompt = postPromptFor(acc)
+            const replyPrompt = replyPromptFor(acc)
+            // "Last activity" = whichever slot ran more recently.
+            const lastTs = [acc.last_post_at, acc.reply_last_run_at]
+              .filter((s): s is string => !!s)
+              .sort()
+              .pop()
+            const lastAt = lastTs ?? null
             return (
               <article key={acc.id} className="account-block">
                 <div className="account-block-head">
@@ -248,16 +297,17 @@ export function Accounts() {
 
                 <div className="account-block-style">
                   <span style={{ fontSize: 22, lineHeight: 1 }}>
-                    {prompt?.mode === 'manual' ? '📝' : '✦'}
+                    {postPrompt?.mode === 'manual' ? '📝' : '✦'}
                   </span>
-                  {prompt ? (
+                  {postPrompt ? (
                     <div className="account-block-style-info">
                       <div className="account-block-style-name">
-                        {prompt.name}{' '}
+                        <span className="slot-label">โพสต์ใหม่</span>{' '}
+                        {postPrompt.name}{' '}
                         <span
                           className="provider-badge"
                           style={
-                            prompt.mode === 'manual'
+                            postPrompt.mode === 'manual'
                               ? {
                                   background: 'var(--lavender-soft)',
                                   color: 'var(--text-on-lavender)',
@@ -272,30 +322,89 @@ export function Accounts() {
                                 }
                           }
                         >
-                          {prompt.mode === 'manual'
+                          {postPrompt.mode === 'manual'
                             ? 'เขียนเอง · ไม่ใช้ AI'
-                            : prompt.provider === 'openai'
+                            : postPrompt.provider === 'openai'
                               ? 'OpenAI'
                               : 'Gemini'}
                         </span>
                       </div>
                       <div className="account-block-style-preview">
-                        {prompt.body.slice(0, 80)}
-                        {prompt.body.length > 80 ? '…' : ''}
+                        {postPrompt.body.slice(0, 80)}
+                        {postPrompt.body.length > 80 ? '…' : ''}
                       </div>
                     </div>
                   ) : (
                     <span className="account-block-style-empty">
-                      ยังไม่ได้ตั้งสไตล์การเขียน · กดปุ่มขวาเพื่อเลือก
+                      <span className="slot-label">โพสต์ใหม่</span> ยังไม่ได้ตั้งสไตล์
                     </span>
                   )}
                   <button
                     type="button"
                     className="btn-ghost btn-sm"
-                    onClick={() => setStyleOf(acc)}
+                    onClick={() => setStyleOf({ acc, slot: 'post' })}
                   >
-                    {prompt ? 'เปลี่ยนสไตล์' : 'ตั้งสไตล์'}
+                    {postPrompt ? 'เปลี่ยนสไตล์' : 'ตั้งสไตล์'}
                   </button>
+                </div>
+
+                <div className="account-block-style account-block-style-reply">
+                  <span style={{ fontSize: 22, lineHeight: 1 }}>💬</span>
+                  {replyPrompt ? (
+                    <div className="account-block-style-info">
+                      <div className="account-block-style-name">
+                        <span className="slot-label slot-label-reply">
+                          Reply
+                        </span>{' '}
+                        {replyPrompt.name}{' '}
+                        <span
+                          className="provider-badge"
+                          style={{
+                            background: 'var(--primary-soft)',
+                            color: 'var(--text)',
+                            fontSize: 10,
+                            padding: '2px 8px',
+                            marginLeft: 4,
+                          }}
+                        >
+                          {replyPrompt.reply_target_mode === 'all'
+                            ? 'ทุกโพสต์'
+                            : replyPrompt.reply_target_mode === 'latest_n'
+                              ? `${replyPrompt.reply_target_count} ล่าสุด`
+                              : '1 โพสต์'}
+                        </span>
+                      </div>
+                      <div className="account-block-style-preview">
+                        {replyPrompt.body.slice(0, 80)}
+                        {replyPrompt.body.length > 80 ? '…' : ''}
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="account-block-style-empty">
+                      <span className="slot-label slot-label-reply">
+                        Reply
+                      </span>{' '}
+                      ยังไม่ได้ตั้ง (เลือกได้ ถ้าอยากให้รัน reply ควบคู่ไปด้วย)
+                    </span>
+                  )}
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {replyPrompt && (
+                      <button
+                        type="button"
+                        className="btn-ghost btn-sm"
+                        onClick={() => onClearReplySlot(acc)}
+                      >
+                        เอาออก
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="btn-ghost btn-sm"
+                      onClick={() => setStyleOf({ acc, slot: 'reply' })}
+                    >
+                      {replyPrompt ? 'เปลี่ยน' : 'ตั้ง reply'}
+                    </button>
+                  </div>
                 </div>
 
                 <div
@@ -360,7 +469,14 @@ export function Accounts() {
 
       <StylePicker
         open={styleOf !== null}
-        currentPromptId={styleOf?.default_prompt_id ?? null}
+        slot={styleOf?.slot ?? 'post'}
+        currentPromptId={
+          styleOf
+            ? styleOf.slot === 'reply'
+              ? (styleOf.acc.reply_prompt_id ?? null)
+              : (styleOf.acc.default_prompt_id ?? null)
+            : null
+        }
         onClose={() => setStyleOf(null)}
         onSelected={onAssignStyle}
       />

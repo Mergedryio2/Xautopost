@@ -2152,6 +2152,71 @@ pre.code {
   flex-wrap: wrap;
 }
 
+/* Slot label chips on account row — visually separate the "Post" vs
+   "Reply" assignment lines so the user can scan which prompt drives
+   which behavior. */
+.slot-label {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: var(--peach, var(--primary-soft));
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.slot-label-reply {
+  background: var(--primary-soft);
+}
+.account-block-style-reply {
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+  margin-top: -2px;
+}
+
+/* Target-mode card selector in the reply prompt form. */
+.target-mode-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.target-mode-card {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card, #fff);
+  cursor: pointer;
+  transition: border-color 120ms, background 120ms;
+}
+.target-mode-card.is-active {
+  border-color: var(--lavender);
+  background: var(--lavender-soft);
+}
+.target-mode-card input[type='radio'] {
+  margin-top: 2px;
+}
+.target-mode-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.target-mode-sub {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.4;
+  margin-top: 2px;
+}
+@media (max-width: 600px) {
+  .target-mode-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Live scan progress — badge on account row + big banner inside picker. */
 .scan-badge {
   display: inline-flex;

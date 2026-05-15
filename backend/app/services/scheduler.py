@@ -24,13 +24,14 @@ from app.services.tweet_scanner import scan_manager
 
 log = logging.getLogger(__name__)
 
-# Account IDs currently mid-post. The UI polls this (via the is_posting
-# field on XAccountOut) to show a live "📮 กำลังโพสต์อยู่" indicator.
-# Also doubles as the tick-time exclusion set so concurrent ticks don't
-# double-pick the same account.
+# (account_id, slot_kind) pairs currently mid-post. slot_kind is 'post' or
+# 'reply' — each account has up to two independent jobs running at once
+# (one new-tweet, one reply). The UI polls this via is_posting(account_id)
+# which collapses across both slots. Also doubles as the tick-time
+# exclusion set so concurrent ticks don't double-book the same slot.
 # In-memory single-process state — resets on sidecar restart, which is
 # correct because in-flight posts also abort on restart.
-_currently_posting: set[int] = set()
+_currently_posting: set[tuple[int, str]] = set()
 
 # Per-operator in-flight counter. Tick uses (parallel_posts - count) to
 # decide how many new accounts to spawn this round. Updated alongside
@@ -154,8 +155,9 @@ def _release_slot(operator_id: int, slot_idx: int) -> None:
 
 def is_posting(account_id: int) -> bool:
     """True while the scheduler has Playwright actively driving X for this
-    account. Used by the UI to surface the posting state in real time."""
-    return account_id in _currently_posting
+    account on EITHER slot (post or reply). Used by the UI to surface the
+    posting state in real time."""
+    return any(aid == account_id for aid, _slot in _currently_posting)
 
 
 class RotationScheduler:
@@ -302,11 +304,17 @@ class RotationScheduler:
                 )
 
     async def _do_tick(self, operator_id: int) -> None:
-        """Pick up to (parallel_posts - in_flight) eligible accounts and
-        spawn each as an independent task. The tick body itself is fast
-        (DB queries + bookkeeping); the actual content build and Playwright
-        drive happen inside the spawned tasks so a slow AI call for one
-        account doesn't block the rest of the rotation."""
+        """Pick up to (parallel_posts - in_flight) eligible (account, slot)
+        jobs and spawn each as an independent task. Each account exposes
+        two independent slots:
+          - 'post' uses default_prompt_id, gated by last_post_at
+          - 'reply' uses reply_prompt_id, gated by reply_last_run_at
+        Both can be eligible in the same tick — the operator's
+        parallel_posts cap and the per-proxy serial guard naturally bound
+        actual concurrency. The tick body itself is fast (DB queries +
+        bookkeeping); content build and Playwright drive happen inside the
+        spawned tasks so a slow AI call for one slot doesn't block the
+        rest of the rotation."""
         with SessionLocal() as db:
             op = db.get(Operator, operator_id)
             if op is None:
@@ -318,11 +326,12 @@ class RotationScheduler:
         if free_slots <= 0:
             return
 
-        chosen_jobs: list[tuple[int, int, int | None, int]] = []
+        # (account_id, op_id, proxy_id, prompt_id, slot_kind)
+        chosen_jobs: list[tuple[int, int, int | None, int, str]] = []
 
         with SessionLocal() as db:
-            # Sort by least-recently-posted (NULLs first => never-posted accounts
-            # get the slot first), tie-break by id for stable order.
+            # Sort by least-recently-active (across either slot). NULLs first
+            # so never-run accounts win the first slot. Tie-break by id.
             accounts = list(
                 db.scalars(
                     select(XAccount)
@@ -341,48 +350,30 @@ class RotationScheduler:
 
             now = now_local()
             today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            # Track per-tick proxy reservations so a single tick doesn't pick
+            # post+reply for the same account through the same proxy — two
+            # parallel Chromiums on one IP is exactly the X anti-spam
+            # fingerprint we're trying to avoid. Across ticks the global
+            # _proxy_in_use guard does the same job.
+            proxy_picked_this_tick: set[int] = set()
 
-            # Loud skips = configuration problems the user needs to know about
-            # (no prompt, manual style empty, etc). Operational throttling
-            # (active window, per-account interval, daily limit) is silent —
-            # logging every tick of "ยังไม่ถึงเวลา" would drown the actual log.
             loud_skipped: list[tuple[int, str]] = []
 
             for acc in accounts:
                 if len(chosen_jobs) >= free_slots:
                     break
 
-                # Concurrency exclusion 1: account already mid-post (from an
-                # earlier tick that hasn't completed yet).
-                if acc.id in _currently_posting:
+                # --- Account-level gates (apply to every slot) ---
+                # Proxy busy from a prior tick or earlier in this tick?
+                if acc.proxy_id is not None and (
+                    acc.proxy_id in _proxy_in_use
+                    or acc.proxy_id in proxy_picked_this_tick
+                ):
                     continue
-
-                # Concurrency exclusion 2: another in-flight post is using
-                # this account's proxy. Two parallel X requests through one
-                # IP is the fingerprint we're trying to avoid.
-                if acc.proxy_id is not None and acc.proxy_id in _proxy_in_use:
-                    continue
-
-                # Operational gate 1: active hours window — silent skip
                 if not _in_active_window(
                     now, acc.active_hours_start, acc.active_hours_end
                 ):
                     continue
-
-                # Operational gate 2: per-account min/max interval — silent skip.
-                # Pick a random target in [min, max] seconds; the same account
-                # cannot post again until that much time has passed since
-                # last_post_at. This is the human-like cadence guarantee.
-                if acc.last_post_at is not None:
-                    target_seconds = random.uniform(
-                        acc.min_interval_seconds, acc.max_interval_seconds
-                    )
-                    elapsed_seconds = (now - acc.last_post_at).total_seconds()
-                    if elapsed_seconds < target_seconds:
-                        continue
-
-                # Operational gate 3: daily limit — silent skip.
-                # daily_limit == 0 means unlimited; skip the count query entirely.
                 if acc.daily_limit > 0:
                     count = (
                         db.scalar(
@@ -399,56 +390,99 @@ class RotationScheduler:
                     if count >= acc.daily_limit:
                         continue
 
-                # Configuration gate: missing prompt — loud skip
-                if not acc.default_prompt_id:
+                # --- Per-slot eligibility ---
+                slot_configs: list[tuple[str, int | None, datetime | None]] = [
+                    ("post", acc.default_prompt_id, acc.last_post_at),
+                    ("reply", acc.reply_prompt_id, acc.reply_last_run_at),
+                ]
+                if all(pid is None for _, pid, _ in slot_configs):
                     loud_skipped.append(
                         (acc.id, "ยังไม่ตั้งสไตล์การเขียน")
                     )
                     continue
 
-                chosen_jobs.append(
-                    (acc.id, acc.operator_id, acc.proxy_id, acc.default_prompt_id)
-                )
+                # At most one slot per account per tick. Both slots can be
+                # eligible (post + reply ready), but firing them in the same
+                # instant would mean two Chromiums driving the same X account
+                # at once — X's anti-spam flags that pattern. With a typical
+                # rotation_interval_seconds of 1-5s, the other slot fires in
+                # the very next tick anyway, so "parallel" from the user's
+                # perspective just means "both modes active in the rotation",
+                # not literally racing the same browser session.
+                for slot_kind, prompt_id, last_run_at in slot_configs:
+                    if len(chosen_jobs) >= free_slots:
+                        break
+                    if prompt_id is None:
+                        continue
+                    if (acc.id, slot_kind) in _currently_posting:
+                        continue
+                    if last_run_at is not None:
+                        target_seconds = random.uniform(
+                            acc.min_interval_seconds, acc.max_interval_seconds
+                        )
+                        elapsed_seconds = (now - last_run_at).total_seconds()
+                        if elapsed_seconds < target_seconds:
+                            continue
+                    chosen_jobs.append(
+                        (
+                            acc.id,
+                            acc.operator_id,
+                            acc.proxy_id,
+                            prompt_id,
+                            slot_kind,
+                        )
+                    )
+                    if acc.proxy_id is not None:
+                        proxy_picked_this_tick.add(acc.proxy_id)
+                    break
 
             if not chosen_jobs:
-                # Only surface configuration issues; operational throttling is
-                # part of normal operation and shouldn't pollute the log.
                 if loud_skipped:
                     _log_skip(loud_skipped[0][0], loud_skipped[0][1])
                 return
 
-            # Reserve slots SYNCHRONOUSLY (no await between mark and spawn)
-            # so a fast subsequent tick can't double-pick or exceed the cap.
-            # asyncio is single-threaded, so this block of mutations is
-            # atomic w.r.t. the next coroutine point. Each job also gets a
-            # window-tile slot index so concurrent Chromiums land in a
-            # deterministic grid instead of stacking randomly.
+            # Reserve slots SYNCHRONOUSLY so a fast subsequent tick can't
+            # double-pick or exceed the cap.
             jobs_with_slots: list[
-                tuple[int, int, int | None, int, int, int]
+                tuple[int, int, int | None, int, str, int, int]
             ] = []
-            for account_id, op_id, proxy_id, prompt_id in chosen_jobs:
-                _currently_posting.add(account_id)
+            for account_id, op_id, proxy_id, prompt_id, slot_kind in chosen_jobs:
+                _currently_posting.add((account_id, slot_kind))
                 _in_flight_by_operator[op_id] = (
                     _in_flight_by_operator.get(op_id, 0) + 1
                 )
                 if proxy_id is not None:
                     _proxy_in_use.add(proxy_id)
-                slot_idx = _acquire_slot(op_id, cap)
+                tile_idx = _acquire_slot(op_id, cap)
                 jobs_with_slots.append(
-                    (account_id, op_id, proxy_id, prompt_id, slot_idx, cap)
+                    (
+                        account_id,
+                        op_id,
+                        proxy_id,
+                        prompt_id,
+                        slot_kind,
+                        tile_idx,
+                        cap,
+                    )
                 )
 
-        # Spawn each post as an independent task — they run fully
-        # concurrent and post the moment their own prep completes. The
-        # tick returns immediately; the next interval tops up free slots.
-        for account_id, op_id, proxy_id, prompt_id, slot_idx, total in jobs_with_slots:
+        for (
+            account_id,
+            op_id,
+            proxy_id,
+            prompt_id,
+            slot_kind,
+            tile_idx,
+            total,
+        ) in jobs_with_slots:
             asyncio.create_task(
                 self._do_post(
                     account_id,
                     op_id,
                     proxy_id,
                     prompt_id,
-                    slot_idx,
+                    slot_kind,
+                    tile_idx,
                     total,
                 )
             )
@@ -459,17 +493,20 @@ class RotationScheduler:
         operator_id: int,
         proxy_id: int | None,
         prompt_id: int,
+        slot_kind: str,
         slot_idx: int,
         total_slots: int,
     ) -> None:
-        """Build content for one chosen account and drive the Playwright
-        post. Wrapped in try/finally so the in-flight bookkeeping is
-        always released, even on AI / network / Playwright failures."""
+        """Build content for one chosen (account, slot) job and drive the
+        Playwright post/reply. Wrapped in try/finally so the in-flight
+        bookkeeping is always released, even on AI / network / Playwright
+        failures."""
+        target_tweet_id: str | None = None
         try:
             with SessionLocal() as db:
                 prompt = db.get(Prompt, prompt_id)
                 if prompt is None:
-                    _log_skip(account_id, "default prompt ถูกลบไปแล้ว")
+                    _log_skip(account_id, "สไตล์ถูกลบไปแล้ว")
                     return
 
                 mode = prompt.mode
@@ -477,70 +514,40 @@ class RotationScheduler:
                 fallback = prompt.fallback_text
                 decorate_emoji = prompt.decorate_emoji
                 decorate_letters = prompt.decorate_letters
-                # Reply-mode fields. `reply_source` decides whether the
-                # reply text comes from the AI prompt body or from the
-                # manual-mode literal text split. The outer `mode` controls
-                # *where* the result is posted (new tweet vs inline reply).
-                target_tweet_id = prompt.target_tweet_id
-                reply_repeat_limit = prompt.reply_repeat_limit
                 reply_source = prompt.reply_source
 
-                # Pre-flight checks for reply mode happen here (inside the
-                # same DB session) so we don't burn an AI call only to bail
-                # out when the target is gone.
-                if mode == "reply":
-                    if not target_tweet_id:
-                        _log_skip(
-                            account_id,
-                            "Reply mode ยังไม่ได้เลือกโพสต์ต้นทาง",
-                        )
-                        return
-                    # Verify the target still exists in our index — if a
-                    # subsequent scan marked it deleted, we shouldn't keep
-                    # trying. (Hard 404 on X also gets caught by the
-                    # poster's _is_target_gone check, but skipping here
-                    # avoids the Playwright spin-up cost.)
-                    tweet_row = db.scalar(
-                        select(TweetIndex).where(
-                            TweetIndex.x_account_id == account_id,
-                            TweetIndex.tweet_id == target_tweet_id,
-                        )
+                # For the reply slot we expect a reply-mode prompt. If the
+                # user accidentally assigned an ai/manual prompt to the
+                # reply slot, bail loudly rather than silently posting it
+                # as a new tweet (which would surprise the user).
+                if slot_kind == "reply" and mode != "reply":
+                    _log_skip(
+                        account_id,
+                        "สไตล์ที่กำหนดให้ช่อง reply ไม่ใช่โหมด reply — "
+                        "เปลี่ยนสไตล์ในช่องนั้น",
                     )
-                    if tweet_row is None:
+                    return
+                if slot_kind == "post" and mode == "reply":
+                    _log_skip(
+                        account_id,
+                        "สไตล์โหมด reply ถูกกำหนดในช่องโพสต์ใหม่ — "
+                        "ย้ายไปช่อง reply",
+                    )
+                    return
+
+                # Multi-target picker for reply mode. Returns the tweet_id
+                # to reply to (one per tick, chosen round-robin) or a
+                # human-readable skip reason.
+                if mode == "reply":
+                    picked, skip_reason = _pick_reply_target(
+                        db, account_id, prompt
+                    )
+                    if picked is None:
                         _log_skip(
-                            account_id,
-                            f"โพสต์ต้นทาง {target_tweet_id} ไม่อยู่ใน index "
-                            "ของบัญชีนี้ — สแกนใหม่หรือเลือกอันอื่น",
+                            account_id, skip_reason or "ไม่มีโพสต์ที่ reply ได้"
                         )
                         return
-                    if tweet_row.deleted_at is not None:
-                        _log_skip(
-                            account_id,
-                            "โพสต์ต้นทางถูกลบไปแล้ว — แก้ไขสไตล์ก่อน",
-                        )
-                        return
-                    # Enforce reply_repeat_limit. 0 = unlimited.
-                    if reply_repeat_limit > 0:
-                        reply_count = (
-                            db.scalar(
-                                select(func.count())
-                                .select_from(PostLog)
-                                .where(
-                                    PostLog.x_account_id == account_id,
-                                    PostLog.reply_to_tweet_id
-                                    == target_tweet_id,
-                                    PostLog.status == "success",
-                                )
-                            )
-                            or 0
-                        )
-                        if reply_count >= reply_repeat_limit:
-                            _log_skip(
-                                account_id,
-                                f"reply ครบ {reply_repeat_limit} ครั้งแล้ว "
-                                f"สำหรับโพสต์ {target_tweet_id}",
-                            )
-                            return
+                    target_tweet_id = picked
 
                 # Decide which content path runs. For non-reply modes the
                 # outer `mode` is the source; for reply mode the inner
@@ -643,9 +650,11 @@ class RotationScheduler:
                     headless=False,
                 )
         except Exception:  # noqa: BLE001
-            log.exception("post task failed for account %s", account_id)
+            log.exception(
+                "%s task failed for account %s", slot_kind, account_id
+            )
         finally:
-            _currently_posting.discard(account_id)
+            _currently_posting.discard((account_id, slot_kind))
             remaining = _in_flight_by_operator.get(operator_id, 0) - 1
             if remaining <= 0:
                 _in_flight_by_operator.pop(operator_id, None)
@@ -663,6 +672,139 @@ def _in_active_window(now: datetime, start: int, end: int) -> bool:
     if start < end:
         return start <= h < end
     return h >= start or h < end  # overnight window
+
+
+def _pick_reply_target(
+    db,  # type: ignore[no-untyped-def]
+    account_id: int,
+    prompt: Prompt,
+) -> tuple[str | None, str | None]:
+    """Pick which tweet a reply-mode prompt targets this tick. Returns
+    (tweet_id, skip_reason). When tweet_id is None the caller should log
+    the skip_reason and bail.
+
+    Selection rules:
+      'single'    → prompt.target_tweet_id, validated against the index.
+      'latest_n'  → N most recently indexed live tweets, round-robin by
+                    fewest past replies (ties: oldest last-reply, then
+                    oldest posted_at).
+      'all'       → every live tweet in the index, same round-robin.
+
+    reply_repeat_limit (when > 0) drops targets that already hit the cap.
+    Retweets are excluded — replying to a retweet would land on the
+    original author's post, not ours."""
+    mode = prompt.reply_target_mode or "single"
+    limit = prompt.reply_repeat_limit
+
+    if mode == "single":
+        tid = prompt.target_tweet_id
+        if not tid:
+            return None, "Reply mode ยังไม่ได้เลือกโพสต์ต้นทาง"
+        row = db.scalar(
+            select(TweetIndex).where(
+                TweetIndex.x_account_id == account_id,
+                TweetIndex.tweet_id == tid,
+            )
+        )
+        if row is None:
+            return None, (
+                f"โพสต์ต้นทาง {tid} ไม่อยู่ใน index ของบัญชีนี้ — "
+                "สแกนใหม่หรือเลือกอันอื่น"
+            )
+        if row.deleted_at is not None:
+            return None, "โพสต์ต้นทางถูกลบไปแล้ว — แก้ไขสไตล์ก่อน"
+        if limit > 0:
+            count = (
+                db.scalar(
+                    select(func.count())
+                    .select_from(PostLog)
+                    .where(
+                        PostLog.x_account_id == account_id,
+                        PostLog.reply_to_tweet_id == tid,
+                        PostLog.status == "success",
+                    )
+                )
+                or 0
+            )
+            if count >= limit:
+                return None, (
+                    f"reply ครบ {limit} ครั้งแล้วสำหรับโพสต์ {tid}"
+                )
+        return tid, None
+
+    # latest_n or all — query candidates from the index.
+    candidates_stmt = (
+        select(TweetIndex)
+        .where(
+            TweetIndex.x_account_id == account_id,
+            TweetIndex.deleted_at.is_(None),
+            TweetIndex.is_retweet.is_(False),
+        )
+        .order_by(TweetIndex.posted_at.desc().nulls_last())
+    )
+    if mode == "latest_n":
+        n = max(1, prompt.reply_target_count or 5)
+        candidates_stmt = candidates_stmt.limit(n)
+    candidates = list(db.scalars(candidates_stmt).all())
+    if not candidates:
+        return None, (
+            "ยังไม่มีโพสต์ใน index ของบัญชีนี้ — กดสแกนก่อน"
+        )
+
+    target_ids = [c.tweet_id for c in candidates]
+    # One pass to fetch (count, last_timestamp) per target. SQLite handles
+    # group_by + count + max in a single statement; for the typical N≤50
+    # the IN clause is well within limits.
+    rows = list(
+        db.execute(
+            select(
+                PostLog.reply_to_tweet_id,
+                func.count(),
+                func.max(PostLog.timestamp),
+            )
+            .where(
+                PostLog.x_account_id == account_id,
+                PostLog.status == "success",
+                PostLog.reply_to_tweet_id.in_(target_ids),
+            )
+            .group_by(PostLog.reply_to_tweet_id)
+        ).all()
+    )
+    count_map: dict[str, int] = {r[0]: r[1] for r in rows}
+    last_map: dict[str, datetime | None] = {r[0]: r[2] for r in rows}
+
+    eligible = []
+    for c in candidates:
+        if limit > 0 and count_map.get(c.tweet_id, 0) >= limit:
+            continue
+        eligible.append(c)
+
+    if not eligible:
+        return None, (
+            f"reply ครบ {limit} ครั้งต่อโพสต์แล้วทุกตัว · "
+            "ขยายตัวเลือก target หรือเพิ่ม limit"
+        )
+
+    # Earliest sentinel for datetime comparison when the candidate has no
+    # past reply. Using utcnow-style epoch keeps sort stable across runs.
+    sentinel = datetime.min.replace(tzinfo=None)
+    eligible.sort(
+        key=lambda c: (
+            count_map.get(c.tweet_id, 0),
+            _coerce_naive(last_map.get(c.tweet_id)) or sentinel,
+            _coerce_naive(c.posted_at) or sentinel,
+        )
+    )
+    return eligible[0].tweet_id, None
+
+
+def _coerce_naive(dt: datetime | None) -> datetime | None:
+    """Sort keys can't mix tz-aware and tz-naive datetimes. SQLite stores
+    timestamps either way depending on how they were inserted, so strip
+    tzinfo for ordering purposes only."""
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
 
 
 def _log_skip(account_id: int, reason: str) -> None:

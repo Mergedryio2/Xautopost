@@ -148,7 +148,15 @@ def _write_log(
         if result.ok:
             acc = db.get(XAccount, account_id)
             if acc is not None:
-                acc.last_post_at = utcnow()
+                now_ts = utcnow()
+                # Independent timestamps per slot so the scheduler can run
+                # both the post and reply rotations without one's cadence
+                # bumping the other's "last run" gate. UI computes max
+                # client-side for the "last activity" display.
+                if reply_to_tweet_id is not None:
+                    acc.reply_last_run_at = now_ts
+                else:
+                    acc.last_post_at = now_ts
         db.commit()
 
 
