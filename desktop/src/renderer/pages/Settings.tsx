@@ -469,6 +469,7 @@ function HistorySection() {
   const [accountFilter, setAccountFilter] = useState<number | null>(null)
   const [statusFilter, setStatusFilter] = useState('')
   const [limit, setLimit] = useState(PAGE_SIZE)
+  const [clearing, setClearing] = useState(false)
 
   async function refresh(nextLimit = limit) {
     setLoading(true)
@@ -580,6 +581,26 @@ function HistorySection() {
               }}
             >
               รีเฟรช
+            </button>
+            <button
+              type="button"
+              className="btn-ghost btn-sm btn-danger"
+              onClick={async () => {
+                if (!window.confirm('คุณต้องการล้างประวัติการโพสต์ทั้งหมดหรือไม่? (Clear Cache)\\nการล้างประวัติจะช่วยลดขนาดฐานข้อมูลและทำให้ระบบที่รันมานานทำงานเร็วขึ้น')) return
+                setClearing(true)
+                try {
+                  await api.clearLogs()
+                  setLimit(PAGE_SIZE)
+                  await refresh(PAGE_SIZE)
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : String(e))
+                } finally {
+                  setClearing(false)
+                }
+              }}
+              disabled={clearing || loading}
+            >
+              {clearing ? 'กำลังล้าง...' : 'ล้างประวัติ (Clear Cache)'}
             </button>
           </div>
 

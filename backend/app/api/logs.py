@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_operator
@@ -53,3 +53,23 @@ def list_logs(
     q = q.order_by(PostLog.timestamp.desc()).limit(limit)
 
     return list(db.scalars(q).all())
+
+
+@router.post("/clear", response_model=dict)
+def clear_logs(
+    op: Annotated[Operator, Depends(get_current_operator)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    operator_account_ids = list(
+        db.scalars(
+            select(XAccount.id).where(XAccount.operator_id == op.id)
+        ).all()
+    )
+    if not operator_account_ids:
+        return {"ok": True, "deleted": 0}
+
+    stmt = delete(PostLog).where(PostLog.x_account_id.in_(operator_account_ids))
+    result = db.execute(stmt)
+    db.commit()
+    
+    return {"ok": True, "deleted": result.rowcount}

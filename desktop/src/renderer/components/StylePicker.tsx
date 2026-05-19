@@ -311,9 +311,9 @@ export function StylePicker({
                   style={
                     t.mode === 'manual'
                       ? {
-                          background: 'var(--lavender-soft)',
-                          borderColor: 'var(--lavender)',
-                        }
+                        background: 'var(--lavender-soft)',
+                        borderColor: 'var(--lavender)',
+                      }
                       : undefined
                   }
                 >
@@ -369,12 +369,12 @@ function PromptForm({
   const [promptMode] = useState<PromptMode>(startMode)
   const [name, setName] = useState(existing?.name ?? seed?.name ?? '')
   const [body, setBody] = useState(existing?.body ?? seed?.body ?? '')
-  const [manualForms, setManualForms] = useState<{text: string, enabled: boolean}[]>(() => {
+  const [manualForms, setManualForms] = useState<{ text: string, enabled: boolean }[]>(() => {
     const raw = existing?.body ?? seed?.body ?? ''
     try {
       const parsed = JSON.parse(raw)
       if (Array.isArray(parsed)) return parsed
-    } catch {}
+    } catch { }
     if (!raw) return [{ text: '', enabled: true }]
     return raw.split(/\n\s*-{3,}\s*\n/).filter(s => s.trim()).map(s => ({ text: s.trim(), enabled: true }))
   })
@@ -382,9 +382,9 @@ function PromptForm({
   const [provider, setProvider] = useState<AiProvider>(initialProvider)
   const [model, setModel] = useState(
     existing?.model ??
-      (initialProvider === 'openai'
-        ? DEFAULT_OPENAI_MODEL
-        : DEFAULT_GEMINI_MODEL),
+    (initialProvider === 'openai'
+      ? DEFAULT_OPENAI_MODEL
+      : DEFAULT_GEMINI_MODEL),
   )
   const [fallback, setFallback] = useState(existing?.fallback_text ?? '')
   const [decorateEmoji, setDecorateEmoji] = useState(
@@ -466,26 +466,26 @@ function PromptForm({
     }
     if (replyAccounts.length === 0) return
     let cancelled = false
-    ;(async () => {
-      for (const acc of replyAccounts) {
-        try {
-          const rows = await api.listTweets(acc.id, {
-            q: targetTweetId,
-            limit: 1,
-          })
-          if (cancelled) return
-          const hit = rows.find((t) => t.tweet_id === targetTweetId)
-          if (hit) {
-            setTargetPreview(hit)
-            setReplyAccountId(acc.id)
-            return
+      ; (async () => {
+        for (const acc of replyAccounts) {
+          try {
+            const rows = await api.listTweets(acc.id, {
+              q: targetTweetId,
+              limit: 1,
+            })
+            if (cancelled) return
+            const hit = rows.find((t) => t.tweet_id === targetTweetId)
+            if (hit) {
+              setTargetPreview(hit)
+              setReplyAccountId(acc.id)
+              return
+            }
+          } catch {
+            // ignore — try next account
           }
-        } catch {
-          // ignore — try next account
         }
-      }
-      if (!cancelled) setTargetPreview(null)
-    })()
+        if (!cancelled) setTargetPreview(null)
+      })()
     return () => {
       cancelled = true
     }
@@ -494,7 +494,7 @@ function PromptForm({
   function insertMediaTokens(ids: number[]) {
     if (ids.length === 0) return
     const tokens = ids.map((id) => `[media:${id}]`).join(' ')
-    
+
     if (promptMode === 'manual' || (promptMode === 'reply' && replySource === 'manual')) {
       const next = [...manualForms]
       const form = next[focusedFormIndex] || next[0]
@@ -932,42 +932,42 @@ function PromptForm({
               ข้อความ reply ({manualForms.filter(f => f.enabled && f.text.trim()).length} ฟอร์มที่เปิดใช้งาน)
             </span>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-               {manualForms.map((form, idx) => (
-                  <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                    <input 
-                      type="checkbox" 
-                      checked={form.enabled} 
-                      onChange={e => {
-                         const next = [...manualForms]
-                         next[idx].enabled = e.target.checked
-                         setManualForms(next)
-                      }}
-                      style={{ marginTop: 8 }}
-                    />
-                    <textarea
-                      value={form.text}
-                      onChange={e => {
-                         const next = [...manualForms]
-                         next[idx].text = e.target.value
-                         setManualForms(next)
-                      }}
-                      onFocus={() => setFocusedFormIndex(idx)}
-                      rows={3}
-                      placeholder={`ฟอร์มที่ ${idx + 1}`}
-                      style={{ fontFamily: 'var(--font)', lineHeight: 1.6, flex: 1 }}
-                    />
-                    <button type="button" className="btn-ghost btn-sm btn-danger" onClick={() => {
-                       const next = [...manualForms]
-                       next.splice(idx, 1)
-                       setManualForms(next)
-                    }} style={{ marginTop: 4 }}>ลบ</button>
-                  </div>
-               ))}
-               <button type="button" className="btn-ghost" onClick={() => {
-                   setManualForms([...manualForms, { text: '', enabled: true }])
-               }} style={{ alignSelf: 'flex-start' }}>+ เพิ่มฟอร์ม</button>
+              {manualForms.map((form, idx) => (
+                <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <input
+                    type="checkbox"
+                    checked={form.enabled}
+                    onChange={e => {
+                      const next = [...manualForms]
+                      next[idx].enabled = e.target.checked
+                      setManualForms(next)
+                    }}
+                    style={{ marginTop: 8 }}
+                  />
+                  <textarea
+                    value={form.text}
+                    onChange={e => {
+                      const next = [...manualForms]
+                      next[idx].text = e.target.value
+                      setManualForms(next)
+                    }}
+                    onFocus={() => setFocusedFormIndex(idx)}
+                    rows={3}
+                    placeholder={`ฟอร์มที่ ${idx + 1}`}
+                    style={{ fontFamily: 'var(--font)', lineHeight: 1.6, flex: 1 }}
+                  />
+                  <button type="button" className="btn-ghost btn-sm btn-danger" onClick={() => {
+                    const next = [...manualForms]
+                    next.splice(idx, 1)
+                    setManualForms(next)
+                  }} style={{ marginTop: 4 }}>ลบ</button>
+                </div>
+              ))}
+              <button type="button" className="btn-ghost" onClick={() => {
+                setManualForms([...manualForms, { text: '', enabled: true }])
+              }} style={{ alignSelf: 'flex-start' }}>+ เพิ่มฟอร์ม</button>
             </div>
-            
+
             <div
               className="form-actions"
               style={{ marginTop: 6, justifyContent: 'flex-start' }}
@@ -983,18 +983,18 @@ function PromptForm({
                 type="button"
                 className="btn-ghost btn-sm"
                 onClick={() => {
-                   const next = [...manualForms]
-                   const form = next[focusedFormIndex] || next[0]
-                   if (form) {
-                     form.text = form.text ? `${form.text}\n[media:random]\n` : '[media:random]\n'
-                     setManualForms(next)
-                   }
+                  const next = [...manualForms]
+                  const form = next[focusedFormIndex] || next[0]
+                  if (form) {
+                    form.text = form.text ? `${form.text}\n[media:random]\n` : '[media:random]\n'
+                    setManualForms(next)
+                  }
                 }}
               >
                 🎲 สุ่มรูปทั้งหมด
               </button>
               <span className="muted-note">
-                 คลิกสุ่มรูปเพื่อสุ่มจากรูปที่เคยอัปโหลด
+                คลิกสุ่มรูปเพื่อสุ่มจากรูปที่เคยอัปโหลด
               </span>
             </div>
           </div>
@@ -1071,42 +1071,42 @@ function PromptForm({
             ฟอร์มข้อความ ({candidates.length} ฟอร์มที่เปิดใช้งาน)
           </span>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-             {manualForms.map((form, idx) => (
-                <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                  <input 
-                    type="checkbox" 
-                    checked={form.enabled} 
-                    onChange={e => {
-                       const next = [...manualForms]
-                       next[idx].enabled = e.target.checked
-                       setManualForms(next)
-                    }}
-                    style={{ marginTop: 8 }}
-                  />
-                  <textarea
-                    value={form.text}
-                    onChange={e => {
-                       const next = [...manualForms]
-                       next[idx].text = e.target.value
-                       setManualForms(next)
-                    }}
-                    onFocus={() => setFocusedFormIndex(idx)}
-                    rows={3}
-                    placeholder={`ฟอร์มที่ ${idx + 1}`}
-                    style={{ fontFamily: 'var(--font)', lineHeight: 1.6, flex: 1 }}
-                  />
-                  <button type="button" className="btn-ghost btn-sm btn-danger" onClick={() => {
-                     const next = [...manualForms]
-                     next.splice(idx, 1)
-                     setManualForms(next)
-                  }} style={{ marginTop: 4 }}>ลบ</button>
-                </div>
-             ))}
-             <button type="button" className="btn-ghost" onClick={() => {
-                 setManualForms([...manualForms, { text: '', enabled: true }])
-             }} style={{ alignSelf: 'flex-start' }}>+ เพิ่มฟอร์ม</button>
+            {manualForms.map((form, idx) => (
+              <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                <input
+                  type="checkbox"
+                  checked={form.enabled}
+                  onChange={e => {
+                    const next = [...manualForms]
+                    next[idx].enabled = e.target.checked
+                    setManualForms(next)
+                  }}
+                  style={{ marginTop: 8 }}
+                />
+                <textarea
+                  value={form.text}
+                  onChange={e => {
+                    const next = [...manualForms]
+                    next[idx].text = e.target.value
+                    setManualForms(next)
+                  }}
+                  onFocus={() => setFocusedFormIndex(idx)}
+                  rows={3}
+                  placeholder={`ฟอร์มที่ ${idx + 1}`}
+                  style={{ fontFamily: 'var(--font)', lineHeight: 1.6, flex: 1 }}
+                />
+                <button type="button" className="btn-ghost btn-sm btn-danger" onClick={() => {
+                  const next = [...manualForms]
+                  next.splice(idx, 1)
+                  setManualForms(next)
+                }} style={{ marginTop: 4 }}>ลบ</button>
+              </div>
+            ))}
+            <button type="button" className="btn-ghost" onClick={() => {
+              setManualForms([...manualForms, { text: '', enabled: true }])
+            }} style={{ alignSelf: 'flex-start' }}>+ เพิ่มฟอร์ม</button>
           </div>
-          
+
           <div
             className="form-actions"
             style={{ marginTop: 6, justifyContent: 'flex-start' }}
@@ -1122,18 +1122,18 @@ function PromptForm({
               type="button"
               className="btn-ghost btn-sm"
               onClick={() => {
-                 const next = [...manualForms]
-                 const form = next[focusedFormIndex] || next[0]
-                 if (form) {
-                   form.text = form.text ? `${form.text}\n[media:random]\n` : '[media:random]\n'
-                   setManualForms(next)
-                 }
+                const next = [...manualForms]
+                const form = next[focusedFormIndex] || next[0]
+                if (form) {
+                  form.text = form.text ? `${form.text}\n[media:random]\n` : '[media:random]\n'
+                  setManualForms(next)
+                }
               }}
             >
               🎲 สุ่มรูปทั้งหมด
             </button>
             <span className="muted-note">
-               คลิกสุ่มรูปเพื่อสุ่มจากรูปที่เคยอัปโหลด
+              คลิกสุ่มรูปเพื่อสุ่มจากรูปที่เคยอัปโหลด
             </span>
           </div>
         </div>
@@ -1162,9 +1162,9 @@ function PromptForm({
           </label>
           <label className="toggle-row" style={{ marginTop: 8 }}>
             <span>
-              <strong>🔤 ตัวอักษร A–Z สุ่ม 6-7 ตัว</strong>
+              <strong>🔤 อักขระสุ่ม 6–7 ตัว (ตัวเล็ก ตัวใหญ่ ตัวเลข)</strong>
               <span className="muted-note" style={{ display: 'block', margin: '4px 0 0' }}>
-                ลดโอกาสซ้ำซ้อน · ตัวอย่าง: "<span style={{ color: 'var(--text)' }}>{previewBase} aBc1Xy</span>"
+                ลดโอกาสซ้ำซ้อน · ตัวอย่าง: "<span style={{ color: 'var(--text)' }}>{previewBase} aB3xFg✨</span>"
               </span>
             </span>
             <input

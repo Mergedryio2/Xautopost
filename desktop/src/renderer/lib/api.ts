@@ -464,4 +464,5 @@ export const api = {
     const qs = search.toString()
     return request<PostLogOut[]>(`/logs${qs ? `?${qs}` : ''}`)
   },
+  clearLogs: () => request<{ ok: boolean; deleted: number }>('/logs/clear', { method: 'POST' }),
 }

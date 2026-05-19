@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Xautopost - Automated Posting System</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&display=swap');
+    body {
+      font-family: 'Inter', 'Noto Sans Thai', sans-serif;
+      background-color: #0F172A; /* Slate 900 */
+      color: #F8FAFC;
+    }
+    .glass-card {
+      background: rgba(30, 41, 59, 0.7);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .gradient-text {
+      background: linear-gradient(to right, #60A5FA, #A78BFA);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-6 relative overflow-hidden">
+  
+  <!-- Background Glow -->
+  <div class="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500 rounded-full mix-blend-multiply filter blur-[128px] opacity-20 animate-pulse"></div>
+  <div class="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500 rounded-full mix-blend-multiply filter blur-[128px] opacity-20 animate-pulse" style="animation-delay: 2s;"></div>
+
+  <main class="glass-card rounded-3xl p-10 max-w-2xl w-full z-10 text-center shadow-2xl">
+    <div class="mb-8">
+      <span class="inline-block px-3 py-1 text-xs font-semibold tracking-wider text-blue-300 bg-blue-900/50 border border-blue-700/50 rounded-full mb-4">VERSION 0.2.2</span>
+      <h1 class="text-5xl font-bold mb-4 tracking-tight">
+        <span class="gradient-text">Xautopost</span>
+      </h1>
+      <p class="text-slate-300 text-lg mb-8 leading-relaxed">
+        ระบบช่วยโพสต์เนื้อหาและตอบกลับอัตโนมัติบน X แบบมืออาชีพ<br>
+        รวดเร็ว ปลอดภัย และจัดการได้หลายบัญชีพร้อมกัน
+      </p>
+    </div>
+
+    <div class="space-y-4 max-w-sm mx-auto">
+      <h3 class="text-slate-400 text-sm font-semibold uppercase tracking-widest mb-4">ดาวน์โหลดสำหรับ</h3>
+      
+      <a href="https://github.com/mergedryio2/Xautopost/releases/download/v0.2.2/Xautopost-0.2.2-arm64.dmg" 
+         class="block w-full px-6 py-4 bg-white text-slate-900 rounded-xl font-semibold hover:bg-slate-200 transition-colors flex items-center justify-center gap-3">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm3.336 14.549c-.58.31-1.397.665-2.22.665-1.923 0-3.13-1.09-3.13-3.155v-3.79H8.625v-1.144h1.36V7.472h1.617v1.653h2.38v1.144h-2.38v3.585c0 .942.364 1.348 1.056 1.348.423 0 .762-.123 1.006-.27v1.617z"/></svg>
+        macOS (Apple Silicon)
+      </a>
+
+      <a href="https://github.com/mergedryio2/Xautopost/releases/download/v0.2.2/Xautopost-0.2.2-x64.dmg" 
+         class="block w-full px-6 py-4 bg-slate-800 text-white rounded-xl font-semibold hover:bg-slate-700 border border-slate-700 transition-colors flex items-center justify-center gap-3">
+        macOS (Intel)
+      </a>
+
+      <a href="https://github.com/mergedryio2/Xautopost/releases/download/v0.2.2/Xautopost-0.2.2.exe" 
+         class="block w-full px-6 py-4 bg-slate-800 text-white rounded-xl font-semibold hover:bg-slate-700 border border-slate-700 transition-colors flex items-center justify-center gap-3">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.12H0V3.45zm10.969-1.63L24 0v11.22H10.969V1.82zM0 12.6h9.75v9.12L0 20.371V12.6zm10.969 0H24V24l-13.031-1.84V12.6z"/></svg>
+        Windows
+      </a>
+    </div>
+    
+    <div class="mt-10 pt-6 border-t border-slate-700/50 text-sm text-slate-500">
+      &copy; 2026 Xautopost. By Yossaphan Kaenwong.
+    </div>
+  </main>
+
+</body>
+</html>
