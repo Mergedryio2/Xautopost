@@ -1,0 +1,57 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (e.g. v0.2.2)'
+        required: true
+        default: 'v0.2.2'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13.2'
+
+      - name: Install Python Dependencies
+        run: |
+          cd backend
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Install Node Dependencies
+        run: |
+          cd desktop
+          npm install
+
+      - name: Build macOS App
+        run: |
+          cd desktop
+          npm run build:mac
+          
+      - name: Create or Update Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Create release if it doesn't exist
+          gh release create ${{ github.event.inputs.version }} --title "Version ${{ github.event.inputs.version }}" --notes "Automated release" || true
+          
+          # Upload assets, replacing if they exist
+          gh release upload ${{ github.event.inputs.version }} desktop/dist/*.dmg --clobber
