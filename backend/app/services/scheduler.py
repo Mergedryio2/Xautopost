@@ -52,6 +52,9 @@ _proxy_in_use: set[int] = set()
 # deterministic grid instead of stacking at the OS default.
 _busy_slots_by_operator: dict[int, set[int]] = {}
 
+# (account_id, prompt_id) -> next manual candidate index
+_manual_index_tracker: dict[tuple[int, int], int] = {}
+
 def _detect_screen_size() -> tuple[int, int]:
     """Best-effort detection of the main display's usable size. macOS:
     AppleScript via Finder returns the desktop bounds (already excludes
@@ -588,19 +591,40 @@ class RotationScheduler:
                         "สไตล์เขียนเองยังไม่มีข้อความ · แก้ไขสไตล์แล้วใส่ข้อความก่อน",
                     )
                     return
-                picked = random.choice(candidates)
-                content, media_ids = extract_media_tokens(picked)
+                
+                track_key = (account_id, prompt_id)
+                current_idx = _manual_index_tracker.get(track_key, 0)
+                if current_idx >= len(candidates):
+                    current_idx = 0
+                picked = candidates[current_idx]
+                _manual_index_tracker[track_key] = current_idx + 1
+
+                content, media_ids, has_random = extract_media_tokens(picked)
                 content = apply_decoration(
                     content,
                     with_emoji=decorate_emoji,
                     with_letters=decorate_letters,
                     account_id=account_id,
                 )
-                if media_ids:
+                if media_ids or has_random:
                     with SessionLocal() as media_db:
-                        media_paths = resolve_media_ids(
-                            media_db, operator_id, media_ids
-                        )
+                        if media_ids:
+                            media_paths = resolve_media_ids(
+                                media_db, operator_id, media_ids
+                            )
+                        if has_random:
+                            from app.db.models import MediaAsset
+                            rand_asset = media_db.scalar(
+                                select(MediaAsset)
+                                .where(MediaAsset.operator_id == operator_id)
+                                .order_by(func.random())
+                                .limit(1)
+                            )
+                            if rand_asset:
+                                from app.services.media import media_path
+                                p = media_path(operator_id, rand_asset.filename)
+                                if p:
+                                    media_paths.append(p)
             else:
                 try:
                     content = await generate_content(

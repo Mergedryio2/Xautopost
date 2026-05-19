@@ -169,27 +169,35 @@ def remove_operator_dir(operator_id: int) -> None:
         shutil.rmtree(p, ignore_errors=True)
 
 
-# `[media:N]` token, where N is the asset id. Tokens can sit anywhere in the
-# candidate; we strip them out of the post text and return the ids in order.
-_MEDIA_TOKEN = re.compile(r"\[media:(\d+)\]")
+# `[media:N]` or `[media:N|M|...]` token, where N, M are asset ids.
+# For multiple ids separated by `|`, one will be picked at random.
+# Special token `[media:random]` will pick a random asset from the operator's pool.
+_MEDIA_TOKEN = re.compile(r"\[media:([0-9\|]+|random)\]", re.IGNORECASE)
 
 
-def extract_media_tokens(text: str) -> tuple[str, list[int]]:
-    """Pull `[media:N]` tokens out of a candidate. Returns the cleaned text
-    (token markers removed, surrounding whitespace tidied) and the ordered
-    list of media ids referenced — duplicates preserved so the user can post
-    the same asset twice if they really want to."""
+def extract_media_tokens(text: str) -> tuple[str, list[int], bool]:
+    """Pull `[media:N]` or `[media:random]` tokens out of a candidate. Returns the cleaned text,
+    the ordered list of specific media ids referenced, and a boolean indicating if a random image is requested."""
     if not text:
-        return text, []
+        return text, [], False
 
     ids: list[int] = []
+    has_random = False
 
+    import random
     def _take(match: re.Match[str]) -> str:
-        ids.append(int(match.group(1)))
+        nonlocal has_random
+        val = match.group(1).lower()
+        if val == "random":
+            has_random = True
+        else:
+            options = val.split("|")
+            picked = random.choice(options)
+            ids.append(int(picked))
         return ""
 
     cleaned = _MEDIA_TOKEN.sub(_take, text)
     # Collapse the blank line(s) the removed tokens leave behind so the
     # resulting post text doesn't have an awkward gap at the top.
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
-    return cleaned, ids
+    return cleaned, ids, has_random

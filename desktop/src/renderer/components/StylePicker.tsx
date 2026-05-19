@@ -369,6 +369,16 @@ function PromptForm({
   const [promptMode] = useState<PromptMode>(startMode)
   const [name, setName] = useState(existing?.name ?? seed?.name ?? '')
   const [body, setBody] = useState(existing?.body ?? seed?.body ?? '')
+  const [manualForms, setManualForms] = useState<{text: string, enabled: boolean}[]>(() => {
+    const raw = existing?.body ?? seed?.body ?? ''
+    try {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) return parsed
+    } catch {}
+    if (!raw) return [{ text: '', enabled: true }]
+    return raw.split(/\n\s*-{3,}\s*\n/).filter(s => s.trim()).map(s => ({ text: s.trim(), enabled: true }))
+  })
+  const [focusedFormIndex, setFocusedFormIndex] = useState(0)
   const [provider, setProvider] = useState<AiProvider>(initialProvider)
   const [model, setModel] = useState(
     existing?.model ??
@@ -484,6 +494,17 @@ function PromptForm({
   function insertMediaTokens(ids: number[]) {
     if (ids.length === 0) return
     const tokens = ids.map((id) => `[media:${id}]`).join(' ')
+    
+    if (promptMode === 'manual' || (promptMode === 'reply' && replySource === 'manual')) {
+      const next = [...manualForms]
+      const form = next[focusedFormIndex] || next[0]
+      if (form) {
+        form.text = form.text ? `${form.text}\n${tokens}\n` : `${tokens}\n`
+        setManualForms(next)
+      }
+      return
+    }
+
     const ta = bodyRef.current
     if (!ta) {
       // Fallback: append at the end with a leading newline so the token sits
@@ -534,13 +555,19 @@ function PromptForm({
       setError('ใส่ชื่อสไตล์ก่อนนะคะ')
       return
     }
-    if (!body.trim()) {
-      setError(
-        promptMode === 'manual' || (promptMode === 'reply' && replySource === 'manual')
-          ? 'ใส่ข้อความที่จะโพสต์ก่อนนะคะ'
-          : 'ใส่คำสั่งให้ AI ก่อนนะคะ',
-      )
-      return
+    let finalBody = body.trim()
+    if (promptMode === 'manual' || (promptMode === 'reply' && replySource === 'manual')) {
+      const cleaned = manualForms.filter(f => f.text.trim())
+      if (cleaned.length === 0) {
+        setError('ใส่ข้อความที่จะโพสต์อย่างน้อย 1 ฟอร์มนะคะ')
+        return
+      }
+      finalBody = JSON.stringify(cleaned)
+    } else {
+      if (!finalBody) {
+        setError('ใส่คำสั่งให้ AI ก่อนนะคะ')
+        return
+      }
     }
     if (
       promptMode === 'reply' &&
@@ -564,7 +591,7 @@ function PromptForm({
         promptMode === 'manual' || (promptMode === 'reply' && replySource === 'manual')
       const data = {
         name: name.trim(),
-        body: body.trim(),
+        body: finalBody,
         mode: promptMode,
         decorate_emoji: decorateEmoji,
         decorate_letters: decorateLetters,
@@ -900,22 +927,77 @@ function PromptForm({
         </div>
 
         {replySource === 'manual' ? (
-          <label className="field">
+          <div className="field">
             <span className="field-label-plain">
-              ข้อความ reply (หลายข้อความคั่นด้วย{' '}
-              <code style={{ background: 'var(--primary-soft)', padding: '1px 6px', borderRadius: 4 }}>
-                ---
-              </code>
-              )
+              ข้อความ reply ({manualForms.filter(f => f.enabled && f.text.trim()).length} ฟอร์มที่เปิดใช้งาน)
             </span>
-            <textarea
-              ref={bodyRef}
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              rows={6}
-              placeholder={'ขอบคุณทุกคนที่ติดตามครับ\n---\nวันนี้มาต่อยอดเรื่องเดิม...'}
-            />
-          </label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+               {manualForms.map((form, idx) => (
+                  <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                    <input 
+                      type="checkbox" 
+                      checked={form.enabled} 
+                      onChange={e => {
+                         const next = [...manualForms]
+                         next[idx].enabled = e.target.checked
+                         setManualForms(next)
+                      }}
+                      style={{ marginTop: 8 }}
+                    />
+                    <textarea
+                      value={form.text}
+                      onChange={e => {
+                         const next = [...manualForms]
+                         next[idx].text = e.target.value
+                         setManualForms(next)
+                      }}
+                      onFocus={() => setFocusedFormIndex(idx)}
+                      rows={3}
+                      placeholder={`ฟอร์มที่ ${idx + 1}`}
+                      style={{ fontFamily: 'var(--font)', lineHeight: 1.6, flex: 1 }}
+                    />
+                    <button type="button" className="btn-ghost btn-sm btn-danger" onClick={() => {
+                       const next = [...manualForms]
+                       next.splice(idx, 1)
+                       setManualForms(next)
+                    }} style={{ marginTop: 4 }}>ลบ</button>
+                  </div>
+               ))}
+               <button type="button" className="btn-ghost" onClick={() => {
+                   setManualForms([...manualForms, { text: '', enabled: true }])
+               }} style={{ alignSelf: 'flex-start' }}>+ เพิ่มฟอร์ม</button>
+            </div>
+            
+            <div
+              className="form-actions"
+              style={{ marginTop: 6, justifyContent: 'flex-start' }}
+            >
+              <button
+                type="button"
+                className="btn-ghost btn-sm"
+                onClick={() => setMediaPickerOpen(true)}
+              >
+                📎 เลือกรูป
+              </button>
+              <button
+                type="button"
+                className="btn-ghost btn-sm"
+                onClick={() => {
+                   const next = [...manualForms]
+                   const form = next[focusedFormIndex] || next[0]
+                   if (form) {
+                     form.text = form.text ? `${form.text}\n[media:random]\n` : '[media:random]\n'
+                     setManualForms(next)
+                   }
+                }}
+              >
+                🎲 สุ่มรูปทั้งหมด
+              </button>
+              <span className="muted-note">
+                 คลิกสุ่มรูปเพื่อสุ่มจากรูปที่เคยอัปโหลด
+              </span>
+            </div>
+          </div>
         ) : (
           <>
             <label className="field">
@@ -961,19 +1043,15 @@ function PromptForm({
   }
 
   if (promptMode === 'manual') {
-    const candidates = body
-      .split(/\n\s*-{3,}\s*\n/)
-      .map((s) => s.trim())
-      .filter(Boolean)
-
-    const previewBase = candidates[0] || 'สวัสดีตอนเช้าค่ะ'
+    const candidates = manualForms.filter(f => f.enabled && f.text.trim())
+    const previewBase = candidates[0]?.text || 'สวัสดีตอนเช้าค่ะ'
 
     return (
       <form className="modal-form" onSubmit={onSubmit}>
         <div className="helper-callout">
           <span style={{ fontSize: 22, lineHeight: 1 }}>📝</span>
           <span>
-            สไตล์นี้ <strong>ไม่ใช้ AI</strong> · คุณพิมพ์ข้อความที่จะโพสต์เอง · ใส่ได้หลายข้อความ คั่นด้วยบรรทัด <code style={{ background: 'var(--primary-soft)', padding: '1px 6px', borderRadius: 4, fontFamily: 'var(--font-mono)' }}>---</code> ระบบจะสุ่มหยิบมาโพสต์
+            สไตล์นี้ <strong>ไม่ใช้ AI</strong> · พิมพ์ข้อความที่เตรียมไว้ · สามารถติ๊กเลือกฟอร์มที่จะใช้หมุนเวียนได้ · ระบบจะ <strong>สลับไปเรื่อยๆ</strong> ตามลำดับ
           </span>
         </div>
 
@@ -988,18 +1066,47 @@ function PromptForm({
           />
         </label>
 
-        <label className="field">
+        <div className="field">
           <span className="field-label-plain">
-            ข้อความที่จะโพสต์ ({candidates.length} ข้อความ)
+            ฟอร์มข้อความ ({candidates.length} ฟอร์มที่เปิดใช้งาน)
           </span>
-          <textarea
-            ref={bodyRef}
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            rows={10}
-            placeholder={`สวัสดีตอนเช้าค่ะ ขอให้วันนี้เป็นวันที่ดี\n---\nเช้านี้กาแฟแก้วโปรดต้องมา\n---\nวันใหม่ ลองอะไรใหม่ๆ ดูบ้าง`}
-            style={{ fontFamily: 'var(--font)', lineHeight: 1.6 }}
-          />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+             {manualForms.map((form, idx) => (
+                <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <input 
+                    type="checkbox" 
+                    checked={form.enabled} 
+                    onChange={e => {
+                       const next = [...manualForms]
+                       next[idx].enabled = e.target.checked
+                       setManualForms(next)
+                    }}
+                    style={{ marginTop: 8 }}
+                  />
+                  <textarea
+                    value={form.text}
+                    onChange={e => {
+                       const next = [...manualForms]
+                       next[idx].text = e.target.value
+                       setManualForms(next)
+                    }}
+                    onFocus={() => setFocusedFormIndex(idx)}
+                    rows={3}
+                    placeholder={`ฟอร์มที่ ${idx + 1}`}
+                    style={{ fontFamily: 'var(--font)', lineHeight: 1.6, flex: 1 }}
+                  />
+                  <button type="button" className="btn-ghost btn-sm btn-danger" onClick={() => {
+                     const next = [...manualForms]
+                     next.splice(idx, 1)
+                     setManualForms(next)
+                  }} style={{ marginTop: 4 }}>ลบ</button>
+                </div>
+             ))}
+             <button type="button" className="btn-ghost" onClick={() => {
+                 setManualForms([...manualForms, { text: '', enabled: true }])
+             }} style={{ alignSelf: 'flex-start' }}>+ เพิ่มฟอร์ม</button>
+          </div>
+          
           <div
             className="form-actions"
             style={{ marginTop: 6, justifyContent: 'flex-start' }}
@@ -1009,13 +1116,27 @@ function PromptForm({
               className="btn-ghost btn-sm"
               onClick={() => setMediaPickerOpen(true)}
             >
-              📎 แนบรูป/วิดิโอ
+              📎 เลือกรูป
+            </button>
+            <button
+              type="button"
+              className="btn-ghost btn-sm"
+              onClick={() => {
+                 const next = [...manualForms]
+                 const form = next[focusedFormIndex] || next[0]
+                 if (form) {
+                   form.text = form.text ? `${form.text}\n[media:random]\n` : '[media:random]\n'
+                   setManualForms(next)
+                 }
+              }}
+            >
+              🎲 สุ่มรูปทั้งหมด
             </button>
             <span className="muted-note">
-              จะแทรก <code style={{ background: 'var(--primary-soft)', padding: '1px 6px', borderRadius: 4, fontFamily: 'var(--font-mono)' }}>[media:N]</code> ตรงตำแหน่งเคอร์เซอร์ · วางในข้อความที่อยากให้แนบ
+               คลิกสุ่มรูปเพื่อสุ่มจากรูปที่เคยอัปโหลด
             </span>
           </div>
-        </label>
+        </div>
 
         <MediaPicker
           open={mediaPickerOpen}
@@ -1041,9 +1162,9 @@ function PromptForm({
           </label>
           <label className="toggle-row" style={{ marginTop: 8 }}>
             <span>
-              <strong>🔤 ตัวอักษร A–Z สุ่ม 4 ตัว</strong>
+              <strong>🔤 ตัวอักษร A–Z สุ่ม 6-7 ตัว</strong>
               <span className="muted-note" style={{ display: 'block', margin: '4px 0 0' }}>
-                26⁴ ≈ 4 แสนความเป็นไปได้ · ตัวอย่าง: "<span style={{ color: 'var(--text)' }}>{previewBase} QXMP</span>"
+                ลดโอกาสซ้ำซ้อน · ตัวอย่าง: "<span style={{ color: 'var(--text)' }}>{previewBase} aBc1Xy</span>"
               </span>
             </span>
             <input
@@ -1054,7 +1175,7 @@ function PromptForm({
           </label>
           {decorateEmoji && decorateLetters && (
             <p className="muted-note" style={{ margin: '6px 0 0' }}>
-              เปิดทั้งสองอย่าง · ตัวอย่าง: "<span style={{ color: 'var(--text)' }}>{previewBase} QXMP ✨</span>"
+              เปิดทั้งสองอย่าง · ตัวอย่าง: "<span style={{ color: 'var(--text)' }}>{previewBase} aBc1Xy ✨</span>"
             </p>
           )}
         </div>
@@ -1072,7 +1193,7 @@ function PromptForm({
             <span>
               ปิดทั้งอิโมจิและตัวอักษรสุ่มแล้ว · ถ้าข้อความน้อยจะถูกหยิบซ้ำและ X จะ reject
               ข้อความเดิมในรอบ 24 ชม. แนะนำใส่อย่างน้อย{' '}
-              <strong>{Math.max(10, candidates.length + 1)} ข้อความ</strong> ที่ต่างกัน
+              <strong>{Math.max(10, manualForms.length + 1)} ข้อความ</strong> ที่ต่างกัน
             </span>
           </div>
         )}

@@ -274,7 +274,7 @@ async def _do_post(
                 # text streams out, which both looks bot-like and sometimes
                 # races X's focus logic. ~2.5s feels natural to a watcher.
                 await asyncio.sleep(2.5)
-                await page.keyboard.type(content, delay=12)
+                await page.keyboard.insert_text(content)
                 await asyncio.sleep(1.2)  # let React debounce + state propagate
 
                 # Attach media via X's hidden composer file input. Done after
@@ -513,7 +513,7 @@ async def _do_reply(
                 # render. Same focus → pause → type pattern works.
                 await editor.focus()
                 await asyncio.sleep(1.5)
-                await page.keyboard.type(content, delay=12)
+                await page.keyboard.insert_text(content)
                 await asyncio.sleep(1.2)
 
                 if media_paths:

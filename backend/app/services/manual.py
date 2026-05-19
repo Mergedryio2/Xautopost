@@ -10,9 +10,27 @@ from collections import deque
 _SEPARATOR = re.compile(r"\n\s*-{3,}\s*\n")
 
 
+import json
+
 def split_manual(body: str) -> list[str]:
-    """Split a manual prompt body into individual post candidates."""
-    parts = _SEPARATOR.split(body or "")
+    """Split a manual prompt body into individual post candidates.
+    Supports both old text-with-separators format and new JSON format
+    from the UI checkboxes."""
+    if not body:
+        return []
+        
+    try:
+        data = json.loads(body)
+        if isinstance(data, list):
+            return [
+                item.get("text", "").strip() 
+                for item in data 
+                if item.get("enabled", True) and item.get("text", "").strip()
+            ]
+    except json.JSONDecodeError:
+        pass
+
+    parts = _SEPARATOR.split(body)
     return [p.strip() for p in parts if p and p.strip()]
 
 
@@ -66,12 +84,13 @@ def _pick_emoji(account_id: int | None) -> str:
 
 # 26**4 ≈ 457k combinations — collision probability is negligible at any
 # realistic post rate, so no recency window is needed.
-_LETTER_LEN = 4
+_LETTER_MIN = 6
+_LETTER_MAX = 7
 
 
 def _pick_letters() -> str:
-    return "".join(random.choices(string.ascii_uppercase, k=_LETTER_LEN))
-
+    length = random.randint(_LETTER_MIN, _LETTER_MAX)
+    return "".join(random.choices(string.ascii_letters + string.digits, k=length))
 
 def apply_decoration(
     text: str,
