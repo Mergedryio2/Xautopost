@@ -41,6 +41,7 @@ Thumbs.db
 
 # User-specific debug logs (may contain tweet content)
 error-log-*.md
+run.log
 
 # Orphan package-lock at repo root (no root package.json after Next.js removal)
 /package-lock.json
