@@ -511,9 +511,9 @@ async def _do_reply(
                     )
 
                 # Inline composer doesn't slide in like the modal, but
-                # X still attaches focus-eating overlays during initial
-                # render. Same focus → pause → type pattern works.
-                await editor.focus()
+                # X's new RichTextInputContainer requires an explicit click
+                # to expand from placeholder state to an active editor.
+                await editor.click()
                 await asyncio.sleep(1.5)
                 await page.keyboard.insert_text(content)
                 await asyncio.sleep(1.2)
