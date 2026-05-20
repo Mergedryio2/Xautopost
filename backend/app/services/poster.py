@@ -234,7 +234,9 @@ async def _do_post(
                 # Open composer modal (more reliable than navigating to /compose/post)
                 await nav_button.click()
 
-                editor = page.locator('[data-testid="tweetTextarea_0"]').first
+                editor = page.locator(
+                    '[data-testid="tweetTextarea_0"], [data-testid="tweetTextarea_0RichTextInputContainer"]'
+                ).first
                 try:
                     await editor.wait_for(timeout=20_000)
                 except Exception:  # noqa: BLE001
@@ -493,7 +495,7 @@ async def _do_reply(
                 # may be multiple matches when quote tweets nest, so
                 # .first picks the top-level reply box.
                 editor = page.locator(
-                    '[data-testid="tweetTextarea_0"]'
+                    '[data-testid="tweetTextarea_0"], [data-testid="tweetTextarea_0RichTextInputContainer"]'
                 ).first
                 try:
                     await editor.wait_for(timeout=20_000)
