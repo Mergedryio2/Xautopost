@@ -467,6 +467,7 @@ function HistorySection() {
   const [statusFilter, setStatusFilter] = useState('')
   const [limit, setLimit] = useState(PAGE_SIZE)
   const [clearing, setClearing] = useState(false)
+  const [showConfirmClear, setShowConfirmClear] = useState(false)
 
   async function refresh(nextLimit = limit) {
     setLoading(true)
@@ -582,24 +583,35 @@ function HistorySection() {
             <button
               type="button"
               className="btn-ghost btn-sm btn-danger"
-              onClick={async () => {
-                if (!window.confirm('คุณต้องการล้างประวัติการโพสต์ทั้งหมดหรือไม่? (Clear Cache)\\nการล้างประวัติจะช่วยลดขนาดฐานข้อมูลและทำให้ระบบที่รันมานานทำงานเร็วขึ้น')) return
-                setClearing(true)
-                try {
-                  await api.clearLogs()
-                  setLimit(PAGE_SIZE)
-                  await refresh(PAGE_SIZE)
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : String(e))
-                } finally {
-                  setClearing(false)
-                }
-              }}
+              onClick={() => setShowConfirmClear(true)}
               disabled={clearing || loading}
             >
               {clearing ? 'กำลังล้าง...' : 'ล้างประวัติ (Clear Cache)'}
             </button>
           </div>
+
+          <ConfirmDialog
+            open={showConfirmClear}
+            title="ล้างประวัติการโพสต์?"
+            message="คุณต้องการล้างประวัติการโพสต์ทั้งหมดหรือไม่? การล้างประวัติจะช่วยลดขนาดฐานข้อมูลและทำให้ระบบที่รันมานานทำงานเร็วขึ้น"
+            tone="danger"
+            confirmLabel="ล้างประวัติ"
+            cancelLabel="ยกเลิก"
+            onConfirm={async () => {
+              setShowConfirmClear(false)
+              setClearing(true)
+              try {
+                await api.clearLogs()
+                setLimit(PAGE_SIZE)
+                await refresh(PAGE_SIZE)
+              } catch (e) {
+                setError(e instanceof Error ? e.message : String(e))
+              } finally {
+                setClearing(false)
+              }
+            }}
+            onCancel={() => setShowConfirmClear(false)}
+          />
 
           {error && <div className="form-error">{error}</div>}
 

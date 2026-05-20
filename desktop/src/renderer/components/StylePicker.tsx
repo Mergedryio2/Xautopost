@@ -727,7 +727,7 @@ function PromptForm({
             }}
           >
             {replyAccounts.length === 0 && (
-              <option value="">— ยังไม่มีบัญชี —</option>
+              <option value="">- ยังไม่มีบัญชี -</option>
             )}
             {replyAccounts.map((a) => (
               <option key={a.id} value={a.id}>
@@ -996,6 +996,29 @@ function PromptForm({
               <span className="muted-note">
                 คลิกสุ่มรูปเพื่อสุ่มจากรูปที่เคยอัปโหลด
               </span>
+            </div>
+            <div className="field" style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+              <span className="field-label-plain">ตกแต่งท้ายโพสต์อัตโนมัติ (กัน X มองว่าซ้ำ)</span>
+              <label className="toggle-row">
+                <span>
+                  <strong>🎲 อิโมจิสุ่ม</strong>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={decorateEmoji}
+                  onChange={(e) => setDecorateEmoji(e.target.checked)}
+                />
+              </label>
+              <label className="toggle-row" style={{ marginTop: 8 }}>
+                <span>
+                  <strong>🔤 อักขระสุ่ม 6–7 ตัว (ตัวเล็ก ตัวใหญ่ ตัวเลข)</strong>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={decorateLetters}
+                  onChange={(e) => setDecorateLetters(e.target.checked)}
+                />
+              </label>
             </div>
           </div>
         ) : (

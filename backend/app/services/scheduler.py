@@ -413,6 +413,10 @@ class RotationScheduler:
                 # perspective just means "both modes active in the rotation",
                 # not literally racing the same browser session.
                 for slot_kind, prompt_id, last_run_at in slot_configs:
+                    if slot_kind == "post" and getattr(acc, "run_mode", "both") == "reply_only":
+                        continue
+                    if slot_kind == "reply" and getattr(acc, "run_mode", "both") == "post_only":
+                        continue
                     if len(chosen_jobs) >= free_slots:
                         break
                     if prompt_id is None:

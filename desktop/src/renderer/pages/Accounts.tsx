@@ -112,6 +112,17 @@ export function Accounts() {
     }
   }
 
+  async function onRunModeChange(acc: XAccountOut, newMode: 'post_only' | 'reply_only' | 'both') {
+    try {
+      const updated = await api.updateAccount(acc.id, {
+        run_mode: newMode,
+      })
+      setAccounts((prev) => prev.map((a) => (a.id === updated.id ? updated : a)))
+    } catch (e) {
+      setAlert(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   async function onAssignStyle(promptId: number) {
     // Capture styleOf into a local so the closure can't see a null value
     // after a downstream setStyleOf(null) batches in. Route by the slot the
@@ -265,31 +276,48 @@ export function Accounts() {
                 <div
                   className={`auto-status ${acc.posting_enabled ? 'is-on' : 'is-off'}`}
                 >
-                  <span className="auto-status-icon">
-                    {acc.posting_enabled ? '✓' : '⏸'}
-                  </span>
-                  {acc.posting_enabled ? (
-                    <span>
-                      <strong>กำลังโพสต์อัตโนมัติ</strong> · ระหว่าง{' '}
-                      {formatHour(acc.active_hours_start)}–
-                      {formatHour(acc.active_hours_end)} ทุก{' '}
-                      {formatSeconds(acc.min_interval_seconds)}–
-                      {formatSeconds(acc.max_interval_seconds)}
-                      {acc.daily_limit === 0
-                        ? ' · ไม่จำกัดจำนวนต่อวัน'
-                        : ` · ไม่เกิน ${acc.daily_limit} ครั้งต่อวัน`}
-                    </span>
-                  ) : acc.default_prompt_id === null ? (
-                    <span>
-                      <strong>ยังเริ่มไม่ได้</strong> · ตั้งสไตล์การเขียนด้านล่างก่อน แล้วเปิดสวิตช์เพื่อให้ระบบโพสต์อัตโนมัติ
-                    </span>
-                  ) : (
-                    <span>
-                      <strong>พร้อมเปิดใช้งาน</strong> · กดสวิตช์ด้านบนเพื่อให้ระบบโพสต์อัตโนมัติ ระหว่าง{' '}
-                      {formatHour(acc.active_hours_start)}–
-                      {formatHour(acc.active_hours_end)}
-                    </span>
-                  )}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span className="auto-status-icon">
+                        {acc.posting_enabled ? '✓' : '⏸'}
+                      </span>
+                      {acc.posting_enabled ? (
+                        <span>
+                          <strong>กำลังโพสต์อัตโนมัติ</strong> · ระหว่าง{' '}
+                          {formatHour(acc.active_hours_start)}–
+                          {formatHour(acc.active_hours_end)} ทุก{' '}
+                          {formatSeconds(acc.min_interval_seconds)}–
+                          {formatSeconds(acc.max_interval_seconds)}
+                          {acc.daily_limit === 0
+                            ? ' · ไม่จำกัดจำนวนต่อวัน'
+                            : ` · ไม่เกิน ${acc.daily_limit} ครั้งต่อวัน`}
+                        </span>
+                      ) : acc.default_prompt_id === null ? (
+                        <span>
+                          <strong>ยังเริ่มไม่ได้</strong> · ตั้งสไตล์การเขียนด้านล่างก่อน แล้วเปิดสวิตช์เพื่อให้ระบบโพสต์อัตโนมัติ
+                        </span>
+                      ) : (
+                        <span>
+                          <strong>พร้อมเปิดใช้งาน</strong> · กดสวิตช์ด้านบนเพื่อให้ระบบโพสต์อัตโนมัติ ระหว่าง{' '}
+                          {formatHour(acc.active_hours_start)}–
+                          {formatHour(acc.active_hours_end)}
+                        </span>
+                      )}
+                    </div>
+                    
+                    <div style={{ paddingLeft: 24, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span className="field-label-plain" style={{ margin: 0, fontSize: 13 }}>โหมดการทำงาน:</span>
+                      <select 
+                        className="run-mode-select"
+                        value={acc.run_mode || 'both'}
+                        onChange={(e) => onRunModeChange(acc, e.target.value as 'post_only' | 'reply_only' | 'both')}
+                      >
+                        <option value="both">โพสต์ใหม่ + ตอบกลับ (ถ้าตั้งไว้)</option>
+                        <option value="post_only">โพสต์ใหม่อย่างเดียว</option>
+                        <option value="reply_only">ตอบกลับอย่างเดียว</option>
+                      </select>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="account-block-style">

@@ -21,6 +21,7 @@ export type XAccountOut = {
   default_prompt_id: number | null
   reply_prompt_id: number | null
   posting_enabled: boolean
+  run_mode: 'post_only' | 'reply_only' | 'both'
   min_interval_seconds: number
   max_interval_seconds: number
   active_hours_start: number
@@ -44,6 +45,7 @@ export type XAccountUpdate = Partial<{
   default_prompt_id: number | null
   reply_prompt_id: number | null
   posting_enabled: boolean
+  run_mode: 'post_only' | 'reply_only' | 'both'
   daily_limit: number
   min_interval_seconds: number
   max_interval_seconds: number

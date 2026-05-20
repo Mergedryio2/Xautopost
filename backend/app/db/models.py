@@ -71,6 +71,7 @@ class XAccount(Base):
     )
     reply_last_run_at: Mapped[datetime | None] = mapped_column(default=None)
     posting_enabled: Mapped[bool] = mapped_column(default=False)
+    run_mode: Mapped[str] = mapped_column(String(16), default="both")
     # Per-account spacing in *seconds*. Scheduler picks a uniform random
     # target in [min, max] and refuses to post the same account again until
     # that much time has passed since `last_post_at`.

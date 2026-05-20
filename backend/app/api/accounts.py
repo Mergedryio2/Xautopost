@@ -33,6 +33,7 @@ class XAccountOut(BaseModel):
     default_prompt_id: int | None
     reply_prompt_id: int | None = None
     posting_enabled: bool
+    run_mode: str
     min_interval_seconds: int
     max_interval_seconds: int
     active_hours_start: int
@@ -64,6 +65,7 @@ class XAccountUpdate(BaseModel):
     default_prompt_id: int | None = None
     reply_prompt_id: int | None = None
     posting_enabled: bool | None = None
+    run_mode: str | None = None
     # 0 = unlimited; otherwise a daily ceiling.
     daily_limit: int | None = Field(default=None, ge=0, le=100000)
     # Per-account spacing in seconds. 1s floor matches the UI; 86400s = 24h cap.

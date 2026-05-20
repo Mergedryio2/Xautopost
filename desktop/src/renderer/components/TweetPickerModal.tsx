@@ -239,7 +239,7 @@ export function TweetPickerModal({
           <div className="tweet-picker-empty">
             {scanStatus?.scanned_tweet_count === 0 && !scanning ? (
               <>
-                ยังไม่เคยสแกนบัญชีนี้ — กด "สแกนใหม่" ด้านบนเพื่อให้ระบบไล่ดูโพสต์ทั้งหมด
+                ยังไม่เคยสแกนบัญชีนี้ · กด "สแกนใหม่" ด้านบนเพื่อให้ระบบไล่ดูโพสต์ทั้งหมด
                 <br />
                 (ใช้เวลา 1–10 นาทีขึ้นกับจำนวนโพสต์)
               </>
@@ -286,13 +286,13 @@ export function TweetPickerModal({
                       <span className="tweet-picker-item-preview">
                         {t.text_preview || (
                           <em style={{ opacity: 0.6 }}>
-                            (ไม่มีข้อความ — โพสต์รูป/วิดีโอเท่านั้น)
+                            (ไม่มีข้อความ · โพสต์รูป/วิดีโอเท่านั้น)
                           </em>
                         )}
                       </span>
                     </div>
                     <div className="tweet-picker-item-meta">
-                      {t.posted_at ? formatRelative(t.posted_at) : '—'}
+                      {t.posted_at ? formatRelative(t.posted_at) : '-'}
                       {' · '}
                       <a
                         href={t.url}

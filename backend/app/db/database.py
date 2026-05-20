@@ -164,6 +164,7 @@ def _migrate_x_accounts() -> None:
             "INTEGER REFERENCES prompts(id) ON DELETE SET NULL",
         ),
         ("reply_last_run_at", "DATETIME DEFAULT NULL"),
+        ("run_mode", "TEXT NOT NULL DEFAULT 'both'"),
     ]
     with engine.begin() as conn:
         cols = conn.execute(text("PRAGMA table_info(x_accounts)")).fetchall()
