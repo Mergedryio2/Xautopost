@@ -43,10 +43,9 @@ class OperatorLogin(BaseModel):
 
 class OperatorUpdate(BaseModel):
     rotation_interval_seconds: int | None = Field(default=None, ge=1, le=3600)
-    # 1 = original sequential behavior. 6 cap matches the analysis in the
-    # design discussion — beyond that, RAM (6× Chromium) and X anti-spam
-    # detection start dominating the gains.
-    parallel_posts: int | None = Field(default=None, ge=1, le=6)
+    # 1 = original sequential behavior.
+    # User can now specify any number.
+    parallel_posts: int | None = Field(default=None, ge=1, le=999)
     avatar_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
 
 

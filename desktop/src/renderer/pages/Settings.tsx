@@ -418,17 +418,14 @@ function ProfileSection({
               <p className="muted-note is-inline" style={{ marginBottom: 6 }}>
                 จำนวนบัญชีที่ระบบจะเปิด Chromium พร้อมกันได้ใน 1 รอบ · 1 = ทำงานทีละบัญชี (เดิม) · มากขึ้น = throughput สูง แต่กิน RAM และเสี่ยงโดน X จับ pattern หากบัญชีใช้ proxy เดียวกัน (ระบบบังคับให้รันเรียงให้อัตโนมัติ)
               </p>
-              <select
+              <input
+                type="number"
+                min="1"
+                max="999"
                 value={parallelPosts}
                 onChange={(e) => setParallelPosts(Number(e.target.value))}
                 style={{ maxWidth: 180 }}
-              >
-                {[1, 2, 3, 4, 5, 6].map((n) => (
-                  <option key={n} value={n}>
-                    {n} บัญชี{n === 1 ? ' (ทีละบัญชี)' : ' พร้อมกัน'}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
           </div>
 
