@@ -310,15 +310,30 @@ async def _do_post(
                 # spreads requests across X's anti-spam window slightly,
                 # which is closer to organic posting than a sub-second
                 # burst from N IPs.
+                url_before = page.url
                 await page.keyboard.press(_POST_HOTKEY)
 
-                # Poll for outcome up to ~12s. Success signals: editor gone
-                # or editor cleared. Failure signal: explicit error toast/alert.
-                for _ in range(24):
+                # Poll for outcome up to ~20s. Success signals:
+                #   1. URL changed (X navigated away from compose = posted)
+                #   2. Editor gone / detached from DOM
+                #   3. Editor inner_text is empty or only placeholder text
+                # Failure signal: explicit error toast/alert.
+                # We use inner_text() (not text_content()) because X's
+                # contenteditable keeps non-text DOM nodes even when visually
+                # empty; text_content() returns those, inner_text() doesn't.
+                _X_PLACEHOLDERS = (
+                    "what is happening",
+                    "what's happening",
+                    "post your reply",
+                )
+                for _ in range(40):
                     await asyncio.sleep(0.5)
                     err = await _check_for_error(page)
                     if err:
                         return PostResult(ok=False, error=err)
+                    # URL change = X accepted the post and navigated away
+                    if page.url != url_before:
+                        return PostResult(ok=True)
                     try:
                         if not await editor.is_visible(timeout=100):
                             return PostResult(ok=True)
@@ -327,23 +342,26 @@ async def _do_post(
                         return PostResult(ok=True)
                     try:
                         text = (
-                            await editor.text_content(timeout=100)
+                            await editor.inner_text(timeout=100)
                         ) or ""
-                        if text.strip() == "":
+                        stripped = text.strip().lower()
+                        if stripped == "" or any(
+                            ph in stripped for ph in _X_PLACEHOLDERS
+                        ):
                             return PostResult(ok=True)
                     except Exception:  # noqa: BLE001
                         pass
 
-                # 12s passed without a clear success or error signal. Final
-                # check: if the editor is STILL visible with text in it, the
-                # post almost certainly didn't go through (X commonly drops
-                # duplicate-content posts silently, or shows a hidden/late
-                # error toast that didn't match our keyword list).
-                # Returning ok=True here used to produce false "success" logs
-                # for posts X never actually accepted.
+                # 20s passed without a clear success or error signal. Final
+                # check: if the editor is STILL visible with the original
+                # content in it, the post almost certainly didn't go through
+                # (X commonly drops duplicate-content posts silently, or shows
+                # a hidden/late error toast that didn't match our keyword list).
                 final_err = await _check_for_error(page)
                 if final_err:
                     return PostResult(ok=False, error=final_err)
+                if page.url != url_before:
+                    return PostResult(ok=True)
                 try:
                     final_visible = await editor.is_visible(timeout=200)
                 except Exception:  # noqa: BLE001
@@ -352,11 +370,14 @@ async def _do_post(
                     return PostResult(ok=True)
                 try:
                     final_text = (
-                        await editor.text_content(timeout=200)
+                        await editor.inner_text(timeout=200)
                     ) or ""
                 except Exception:  # noqa: BLE001
                     return PostResult(ok=True)
-                if final_text.strip():
+                final_stripped = final_text.strip().lower()
+                if final_stripped and not any(
+                    ph in final_stripped for ph in _X_PLACEHOLDERS
+                ):
                     return PostResult(
                         ok=False,
                         error=(
@@ -533,17 +554,29 @@ async def _do_reply(
                 button_timeout = 120_000 if media_paths else 20_000
                 await button.wait_for(timeout=button_timeout)
 
+                url_before_reply = page.url
                 await page.keyboard.press(_POST_HOTKEY)
 
                 # Polling block — same shape as post_tweet's outcome
                 # detection. The editor either disappears (replaced by the
-                # newly-posted reply card) or clears (X swaps the inline
-                # composer back to a placeholder).
-                for _ in range(24):
+                # newly-posted reply card), clears (X swaps inline composer
+                # back to placeholder), or URL changes.
+                # Use inner_text() not text_content() — X's contenteditable
+                # leaves phantom DOM nodes so text_content() returns stale
+                # content even when the editor looks visually empty.
+                _X_REPLY_PLACEHOLDERS = (
+                    "post your reply",
+                    "tweet your reply",
+                    "what is happening",
+                    "what's happening",
+                )
+                for _ in range(40):
                     await asyncio.sleep(0.5)
                     err = await _check_for_error(page)
                     if err:
                         return PostResult(ok=False, error=err)
+                    if page.url != url_before_reply:
+                        return PostResult(ok=True)
                     try:
                         if not await editor.is_visible(timeout=100):
                             return PostResult(ok=True)
@@ -551,9 +584,12 @@ async def _do_reply(
                         return PostResult(ok=True)
                     try:
                         text = (
-                            await editor.text_content(timeout=100)
+                            await editor.inner_text(timeout=100)
                         ) or ""
-                        if text.strip() == "":
+                        stripped = text.strip().lower()
+                        if stripped == "" or any(
+                            ph in stripped for ph in _X_REPLY_PLACEHOLDERS
+                        ):
                             return PostResult(ok=True)
                     except Exception:  # noqa: BLE001
                         pass
@@ -561,6 +597,8 @@ async def _do_reply(
                 final_err = await _check_for_error(page)
                 if final_err:
                     return PostResult(ok=False, error=final_err)
+                if page.url != url_before_reply:
+                    return PostResult(ok=True)
                 try:
                     final_visible = await editor.is_visible(timeout=200)
                 except Exception:  # noqa: BLE001
@@ -569,11 +607,14 @@ async def _do_reply(
                     return PostResult(ok=True)
                 try:
                     final_text = (
-                        await editor.text_content(timeout=200)
+                        await editor.inner_text(timeout=200)
                     ) or ""
                 except Exception:  # noqa: BLE001
                     return PostResult(ok=True)
-                if final_text.strip():
+                final_stripped = final_text.strip().lower()
+                if final_stripped and not any(
+                    ph in final_stripped for ph in _X_REPLY_PLACEHOLDERS
+                ):
                     return PostResult(
                         ok=False,
                         error=(
