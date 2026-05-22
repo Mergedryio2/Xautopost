@@ -1060,6 +1060,13 @@ function PromptForm({
           onClose={() => setTweetPickerOpen(false)}
         />
 
+        <MediaPicker
+          open={mediaPickerOpen}
+          multi
+          onClose={() => setMediaPickerOpen(false)}
+          onPick={insertMediaTokens}
+        />
+
         {renderActions()}
       </form>
     )
