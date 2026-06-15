@@ -328,6 +328,7 @@ async def _do_post(
                 )
                 for _ in range(40):
                     await asyncio.sleep(0.5)
+                    await _dismiss_boost_popup(page)
                     err = await _check_for_error(page)
                     if err:
                         return PostResult(ok=False, error=err)
@@ -572,6 +573,7 @@ async def _do_reply(
                 )
                 for _ in range(40):
                     await asyncio.sleep(0.5)
+                    await _dismiss_boost_popup(page)
                     err = await _check_for_error(page)
                     if err:
                         return PostResult(ok=False, error=err)
@@ -658,6 +660,56 @@ async def _is_target_gone(page) -> bool:  # type: ignore[no-untyped-def]
         ):
             if phrase in lowered:
                 return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+async def _dismiss_boost_popup(page) -> bool:  # type: ignore[no-untyped-def]
+    """Detect and dismiss X's 'Try boosting this post!' upsell popup by
+    clicking the 'Maybe later' button. Returns True if the popup was found
+    and dismissed, False if it was not present.
+
+    Called opportunistically inside the post-submit polling loop on every
+    iteration so we don't need to know *when* X will show the popup — we
+    just dismiss it the moment it appears. The 300ms / 200ms timeouts are
+    intentionally short so this helper adds no meaningful delay to the
+    common path where the popup never appears.
+
+    X surfaces this dialog via data-testid='confirmationSheetDialog'.
+    The 'Maybe later' button is the secondary CTA inside that dialog
+    (primary is 'Boost post'). We also do a fallback text scan in case
+    X changes the testid, and include Thai text for Thai-locale accounts.
+    """
+    try:
+        dialog = page.locator('[data-testid="confirmationSheetDialog"]').first
+        if await dialog.is_visible(timeout=300):
+            # Try both English and Thai dismiss labels.
+            for label in ("Maybe later", "บางทีภายหลัง", "ไม่ใช่ตอนนี้"):
+                try:
+                    btn = dialog.get_by_text(label, exact=False).first
+                    if await btn.is_visible(timeout=200):
+                        await btn.click()
+                        await asyncio.sleep(0.5)  # let the dialog animate out
+                        log.debug("dismissed boost popup via dialog (%s)", label)
+                        return True
+                except Exception:  # noqa: BLE001
+                    continue
+    except Exception:  # noqa: BLE001
+        pass
+    # Belt-and-suspenders: text-scan the whole page in case X changed the
+    # testid. Only fires if the primary check above found no dialog.
+    try:
+        for label in ("Maybe later", "บางทีภายหลัง", "ไม่ใช่ตอนนี้"):
+            try:
+                btn = page.get_by_text(label, exact=False).first
+                if await btn.is_visible(timeout=200):
+                    await btn.click()
+                    await asyncio.sleep(0.5)
+                    log.debug("dismissed boost popup via page text (%s)", label)
+                    return True
+            except Exception:  # noqa: BLE001
+                continue
     except Exception:  # noqa: BLE001
         pass
     return False
