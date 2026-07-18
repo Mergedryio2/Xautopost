@@ -311,6 +311,9 @@ async def _do_post(
                 # which is closer to organic posting than a sub-second
                 # burst from N IPs.
                 url_before = page.url
+                # Dismiss any boost/upsell popup that may have appeared
+                # during compose — some accounts see it before submit.
+                await _dismiss_boost_popup(page)
                 await page.keyboard.press(_POST_HOTKEY)
 
                 # Poll for outcome up to ~20s. Success signals:
@@ -556,6 +559,9 @@ async def _do_reply(
                 await button.wait_for(timeout=button_timeout)
 
                 url_before_reply = page.url
+                # Dismiss any boost/upsell popup that may have appeared
+                # during compose — some accounts see it before submit.
+                await _dismiss_boost_popup(page)
                 await page.keyboard.press(_POST_HOTKEY)
 
                 # Polling block — same shape as post_tweet's outcome
@@ -666,52 +672,112 @@ async def _is_target_gone(page) -> bool:  # type: ignore[no-untyped-def]
 
 
 async def _dismiss_boost_popup(page) -> bool:  # type: ignore[no-untyped-def]
-    """Detect and dismiss X's 'Try boosting this post!' upsell popup by
-    clicking the 'Maybe later' button. Returns True if the popup was found
-    and dismissed, False if it was not present.
+    """Detect and dismiss X's 'Try boosting this post!' upsell popup.
 
-    Called opportunistically inside the post-submit polling loop on every
-    iteration so we don't need to know *when* X will show the popup — we
-    just dismiss it the moment it appears. The 300ms / 200ms timeouts are
-    intentionally short so this helper adds no meaningful delay to the
-    common path where the popup never appears.
+    Strategy (layered, most-specific first):
 
-    X surfaces this dialog via data-testid='confirmationSheetDialog'.
-    The 'Maybe later' button is the secondary CTA inside that dialog
-    (primary is 'Boost post'). We also do a fallback text scan in case
-    X changes the testid, and include Thai text for Thai-locale accounts.
+    1. data-testid="confirmationSheetDialog" + button text  (original)
+    2. role="dialog" + getByRole('button') with dismiss labels  (ARIA-robust)
+    3. Whole-page getByRole('button') scan for dismiss labels  (fallback)
+    4. force=True click as last resort when pointer-events are blocked
+
+    Dismiss labels tried (EN + TH): "Maybe later", "Not now",
+    "บางทีภายหลัง", "ไม่ใช่ตอนนี้", "ข้ามไปก่อน".
+    Timeout per probe is 600ms (up from 300ms) so slow-animating popups
+    that appear after the reply submit hotkey are caught within the first
+    few polling iterations.
     """
+    _DISMISS_LABELS = (
+        "Maybe later",
+        "Not now",
+        "บางทีภายหลัง",
+        "ไม่ใช่ตอนนี้",
+        "ข้ามไปก่อน",
+    )
+
+    # ── Layer 1: original testid ─────────────────────────────────────────
     try:
         dialog = page.locator('[data-testid="confirmationSheetDialog"]').first
-        if await dialog.is_visible(timeout=300):
-            # Try both English and Thai dismiss labels.
-            for label in ("Maybe later", "บางทีภายหลัง", "ไม่ใช่ตอนนี้"):
+        if await dialog.is_visible(timeout=600):
+            for label in _DISMISS_LABELS:
                 try:
                     btn = dialog.get_by_text(label, exact=False).first
-                    if await btn.is_visible(timeout=200):
+                    if await btn.is_visible(timeout=300):
                         await btn.click()
-                        await asyncio.sleep(0.5)  # let the dialog animate out
-                        log.debug("dismissed boost popup via dialog (%s)", label)
+                        await asyncio.sleep(0.6)
+                        log.debug("boost popup dismissed via confirmationSheetDialog (%s)", label)
                         return True
                 except Exception:  # noqa: BLE001
                     continue
     except Exception:  # noqa: BLE001
         pass
-    # Belt-and-suspenders: text-scan the whole page in case X changed the
-    # testid. Only fires if the primary check above found no dialog.
+
+    # ── Layer 2: any role=dialog — robust against testid renames ─────────
     try:
-        for label in ("Maybe later", "บางทีภายหลัง", "ไม่ใช่ตอนนี้"):
+        dialogs = page.locator('[role="dialog"]')
+        count = await dialogs.count()
+        for i in range(count):
+            d = dialogs.nth(i)
             try:
-                btn = page.get_by_text(label, exact=False).first
+                if not await d.is_visible(timeout=200):
+                    continue
+                # getByRole within dialog scope
+                for label in _DISMISS_LABELS:
+                    try:
+                        btn = d.get_by_role("button", name=label)
+                        if await btn.is_visible(timeout=200):
+                            await btn.click()
+                            await asyncio.sleep(0.6)
+                            log.debug("boost popup dismissed via role=dialog (%s)", label)
+                            return True
+                    except Exception:  # noqa: BLE001
+                        continue
+                # text fallback within dialog scope
+                for label in _DISMISS_LABELS:
+                    try:
+                        btn = d.get_by_text(label, exact=False).first
+                        if await btn.is_visible(timeout=200):
+                            await btn.click()
+                            await asyncio.sleep(0.6)
+                            log.debug("boost popup dismissed via role=dialog text (%s)", label)
+                            return True
+                    except Exception:  # noqa: BLE001
+                        continue
+            except Exception:  # noqa: BLE001
+                continue
+    except Exception:  # noqa: BLE001
+        pass
+
+    # ── Layer 3: whole-page button scan ──────────────────────────────────
+    try:
+        for label in _DISMISS_LABELS:
+            try:
+                btn = page.get_by_role("button", name=label)
                 if await btn.is_visible(timeout=200):
                     await btn.click()
-                    await asyncio.sleep(0.5)
-                    log.debug("dismissed boost popup via page text (%s)", label)
+                    await asyncio.sleep(0.6)
+                    log.debug("boost popup dismissed via page getByRole (%s)", label)
                     return True
             except Exception:  # noqa: BLE001
                 continue
     except Exception:  # noqa: BLE001
         pass
+
+    # ── Layer 4: text-scan + force click (pointer-events blocked) ────────
+    try:
+        for label in _DISMISS_LABELS:
+            try:
+                btn = page.get_by_text(label, exact=False).first
+                if await btn.is_visible(timeout=150):
+                    await btn.click(force=True)
+                    await asyncio.sleep(0.6)
+                    log.debug("boost popup dismissed via force click (%s)", label)
+                    return True
+            except Exception:  # noqa: BLE001
+                continue
+    except Exception:  # noqa: BLE001
+        pass
+
     return False
 
 
