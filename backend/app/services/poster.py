@@ -688,6 +688,7 @@ _BOOST_DISMISS_LABELS: tuple[str, ...] = (
     "skip",
     "dismiss",
     "later",
+    "close",
     # Thai variants X has been observed using
     "บางทีภายหลัง",      # Maybe later
     "บางทีในภายหลัง",   # Maybe later (alt)
@@ -723,7 +724,9 @@ _BOOST_DISMISS_JS = """
     for (const label of labels) {
         const btn = allClickable.find(b => {
             const t = (b.innerText || b.textContent || '').trim().toLowerCase();
-            return t.length > 0 && t.includes(label) && !boostKw.some(k => t.includes(k));
+            const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+            const combined = t + ' ' + aria;
+            return combined.length > 0 && combined.includes(label) && !boostKw.some(k => combined.includes(k));
         });
         if (btn) {
             btn.click();
@@ -749,7 +752,9 @@ _BOOST_DISMISS_JS = """
             });
         for (const container of containers) {
             const text = (container.innerText || '').toLowerCase();
-            if (!boostKw.some(k => text.includes(k))) continue;
+            const cAria = (container.getAttribute('aria-label') || '').toLowerCase();
+            const cCombined = text + ' ' + cAria;
+            if (!boostKw.some(k => cCombined.includes(k))) continue;
 
             const cBtns = Array.from(
                 container.querySelectorAll('button, [role="button"], [tabindex="0"]')
@@ -760,18 +765,22 @@ _BOOST_DISMISS_JS = """
             
             const dismissBtn = cBtns.find(b => {
                 const t = (b.innerText || b.textContent || '').toLowerCase();
-                return t.length > 0 && !boostKw.some(k => t.includes(k));
+                const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                const combined = t + ' ' + aria;
+                // It's a dismiss button if it has some identifier but NOT boost keywords
+                // Or if it's the only button other than the boost button
+                return (combined.length > 0 || b.querySelector('svg')) && !boostKw.some(k => combined.includes(k));
             });
             
             if (dismissBtn) {
                 dismissBtn.click();
-                return 'B:' + (dismissBtn.innerText || '').trim().substring(0, 30);
+                return 'B:clicked';
             }
 
             // Last resort: click the last button (secondary CTAs are usually last)
             if (cBtns.length > 1) {
                 cBtns[cBtns.length - 1].click();
-                return 'B-last:' + (cBtns[cBtns.length - 1].innerText || '').trim().substring(0, 30);
+                return 'B-last:clicked';
             }
         }
     }
@@ -779,7 +788,9 @@ _BOOST_DISMISS_JS = """
     // ── Strategy C: walk up from boost button to find dismiss sibling ────
     const boostBtn = allClickable.find(b => {
         const t = (b.innerText || b.textContent || '').toLowerCase();
-        return boostKw.some(k => t.includes(k)) && t.length > 1;
+        const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+        const combined = t + ' ' + aria;
+        return boostKw.some(k => combined.includes(k)) && combined.length > 1;
     });
     if (boostBtn) {
         let node = boostBtn.parentElement;
@@ -789,16 +800,18 @@ _BOOST_DISMISS_JS = """
             ).filter(b => {
                 if (b === boostBtn) return false;
                 const t = (b.innerText || b.textContent || '').toLowerCase();
+                const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                const combined = t + ' ' + aria;
                 const r = b.getBoundingClientRect();
                 return r.width > 0 && r.height > 0 && r.top >= 0
                     && r.top < window.innerHeight
-                    && t.length > 0
-                    && !boostKw.some(k => t.includes(k));
+                    && (combined.length > 0 || b.querySelector('svg'))
+                    && !boostKw.some(k => combined.includes(k));
             });
             if (siblings.length > 0) {
                 const target = siblings[siblings.length - 1];
                 target.click();
-                return 'C:' + (target.innerText || '').trim().substring(0, 30);
+                return 'C:clicked';
             }
             node = node.parentElement;
         }
