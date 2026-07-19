@@ -687,29 +687,92 @@ _BOOST_DISMISS_LABELS: tuple[str, ...] = (
     "no thanks",
     "skip",
     "dismiss",
-    "บางทีภายหลัง",
-    "ไม่ใช่ตอนนี้",
-    "ข้ามไปก่อน",
+    "later",
+    # Thai variants X has been observed using
+    "บางทีภายหลัง",      # Maybe later
+    "บางทีในภายหลัง",   # Maybe later (alt)
+    "ไว้ภายหลัง",       # Later
+    "ภายหลัง",           # Later (short)
+    "ทีหลัง",             # Later (informal)
+    "ไม่ใช่ตอนนี้",     # Not now
+    "ไม่เดี๋ยวนี้",    # Not now (alt)
+    "ข้ามไปก่อน",       # Skip for now
+    "ข้าม",               # Skip
+    "ยกเลิก",             # Cancel
+    "ไม่ขอบคุณ",         # No thanks
+    "ไม่ต้องการตอนนี้",  # Don’t want now
+    "ปิด",               # Close
 )
 
-# JS snippet that searches all visible buttons for a dismiss label.
-# Returns the matched label string on success, null if nothing found.
+# JS snippet that searches all visible buttons for a dismiss label OR
+# (fallback) finds the secondary button inside any boost-related dialog.
+# Returns the matched label / button text on success, null if nothing found.
 _BOOST_DISMISS_JS = """
 (labels) => {
+    // ── Strategy A: label-based scan across all visible buttons ──────────
     const btns = Array.from(
         document.querySelectorAll('button, [role="button"]')
     );
     for (const label of labels) {
         const btn = btns.find(b => {
             const t = (b.innerText || b.textContent || '').trim().toLowerCase();
-            return t === label || t.startsWith(label);
+            return t.includes(label);  // includes > startsWith: handles wrapped text
         });
         if (btn) {
             const r = btn.getBoundingClientRect();
-            // Only click if actually on-screen and sized.
             if (r.width > 0 && r.height > 0 && r.top >= 0 && r.top < window.innerHeight) {
                 btn.click();
-                return label;
+                return 'label:' + label;
+            }
+        }
+    }
+
+    // ── Strategy B: find the boost dialog and click the NON-boost button ─
+    // Works for ANY language without knowing the dismiss label text.
+    const boostKeywords = ['boost', 'บูสต์', 'promot'];
+    const dialogSelectors = [
+        '[data-testid="confirmationSheetDialog"]',
+        '[role="dialog"]',
+        '[data-testid*="sheet"]',
+        '[data-testid*="modal"]',
+    ];
+    for (const sel of dialogSelectors) {
+        const dialogs = Array.from(document.querySelectorAll(sel))
+            .filter(d => {
+                const r = d.getBoundingClientRect();
+                return r.width > 0 && r.height > 0;
+            });
+        for (const dialog of dialogs) {
+            const dialogText = (dialog.innerText || '').toLowerCase();
+            const isBoostDialog = boostKeywords.some(k => dialogText.includes(k));
+            if (!isBoostDialog) continue;
+
+            // Find the buttons inside this dialog
+            const dialogBtns = Array.from(
+                dialog.querySelectorAll('button, [role="button"]')
+            ).filter(b => {
+                const r = b.getBoundingClientRect();
+                return r.width > 0 && r.height > 0;
+            });
+            if (dialogBtns.length === 0) continue;
+
+            // The dismiss button is the one whose text does NOT contain
+            // boost-related keywords (i.e. it’s the secondary / cancel CTA).
+            const dismissBtn = dialogBtns.find(b => {
+                const t = (b.innerText || b.textContent || '').toLowerCase();
+                return t.length > 0 && !boostKeywords.some(k => t.includes(k));
+            });
+            if (dismissBtn) {
+                dismissBtn.click();
+                const label = (dismissBtn.innerText || dismissBtn.textContent || '').trim();
+                return 'secondary:' + label;
+            }
+
+            // Last resort: click the last button (secondary CTAs are usually last)
+            const lastBtn = dialogBtns[dialogBtns.length - 1];
+            if (lastBtn) {
+                lastBtn.click();
+                return 'last-btn:' + (lastBtn.innerText || '').trim();
             }
         }
     }
@@ -734,7 +797,9 @@ async def _register_boost_popup_handler(page) -> None:  # type: ignore[no-untype
         popup_loc = page.locator(
             '[data-testid="confirmationSheetDialog"], '
             '[role="dialog"]:has-text("boost"), '
-            '[role="dialog"]:has-text("Boost")'
+            '[role="dialog"]:has-text("Boost"), '
+            '[role="dialog"]:has-text("บูสต์"), '
+            '[role="dialog"]:has-text("ลองบูสต์")'
         )
 
         async def _auto_dismiss() -> None:
