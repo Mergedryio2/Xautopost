@@ -709,71 +709,98 @@ _BOOST_DISMISS_LABELS: tuple[str, ...] = (
 # Returns the matched label / button text on success, null if nothing found.
 _BOOST_DISMISS_JS = """
 (labels) => {
+    const boostKw = ['boost', 'บูสต์', 'promot'];
+    
     // ── Strategy A: label-based scan across all visible buttons ──────────
-    const btns = Array.from(
-        document.querySelectorAll('button, [role="button"]')
-    );
+    // tabindex=0 catches X's custom div-buttons that lack role="button"
+    const allClickable = Array.from(document.querySelectorAll(
+        'button, [role="button"], [tabindex="0"]'
+    )).filter(b => {
+        const r = b.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && r.top >= 0 && r.top < window.innerHeight;
+    });
+
     for (const label of labels) {
-        const btn = btns.find(b => {
+        const btn = allClickable.find(b => {
             const t = (b.innerText || b.textContent || '').trim().toLowerCase();
-            return t.includes(label);  // includes > startsWith: handles wrapped text
+            return t.length > 0 && t.includes(label) && !boostKw.some(k => t.includes(k));
         });
         if (btn) {
-            const r = btn.getBoundingClientRect();
-            if (r.width > 0 && r.height > 0 && r.top >= 0 && r.top < window.innerHeight) {
-                btn.click();
-                return 'label:' + label;
-            }
+            btn.click();
+            return 'A:' + label;
         }
     }
 
     // ── Strategy B: find the boost dialog and click the NON-boost button ─
     // Works for ANY language without knowing the dismiss label text.
-    const boostKeywords = ['boost', 'บูสต์', 'promot'];
     const dialogSelectors = [
         '[data-testid="confirmationSheetDialog"]',
         '[role="dialog"]',
         '[data-testid*="sheet"]',
         '[data-testid*="modal"]',
+        '#layers > div',
+        '[style*="position: fixed"] > div',
     ];
     for (const sel of dialogSelectors) {
-        const dialogs = Array.from(document.querySelectorAll(sel))
+        const containers = Array.from(document.querySelectorAll(sel))
             .filter(d => {
                 const r = d.getBoundingClientRect();
                 return r.width > 0 && r.height > 0;
             });
-        for (const dialog of dialogs) {
-            const dialogText = (dialog.innerText || '').toLowerCase();
-            const isBoostDialog = boostKeywords.some(k => dialogText.includes(k));
-            if (!isBoostDialog) continue;
+        for (const container of containers) {
+            const text = (container.innerText || '').toLowerCase();
+            if (!boostKw.some(k => text.includes(k))) continue;
 
-            // Find the buttons inside this dialog
-            const dialogBtns = Array.from(
-                dialog.querySelectorAll('button, [role="button"]')
+            const cBtns = Array.from(
+                container.querySelectorAll('button, [role="button"], [tabindex="0"]')
             ).filter(b => {
                 const r = b.getBoundingClientRect();
                 return r.width > 0 && r.height > 0;
             });
-            if (dialogBtns.length === 0) continue;
-
-            // The dismiss button is the one whose text does NOT contain
-            // boost-related keywords (i.e. it’s the secondary / cancel CTA).
-            const dismissBtn = dialogBtns.find(b => {
+            
+            const dismissBtn = cBtns.find(b => {
                 const t = (b.innerText || b.textContent || '').toLowerCase();
-                return t.length > 0 && !boostKeywords.some(k => t.includes(k));
+                return t.length > 0 && !boostKw.some(k => t.includes(k));
             });
+            
             if (dismissBtn) {
                 dismissBtn.click();
-                const label = (dismissBtn.innerText || dismissBtn.textContent || '').trim();
-                return 'secondary:' + label;
+                return 'B:' + (dismissBtn.innerText || '').trim().substring(0, 30);
             }
 
             // Last resort: click the last button (secondary CTAs are usually last)
-            const lastBtn = dialogBtns[dialogBtns.length - 1];
-            if (lastBtn) {
-                lastBtn.click();
-                return 'last-btn:' + (lastBtn.innerText || '').trim();
+            if (cBtns.length > 1) {
+                cBtns[cBtns.length - 1].click();
+                return 'B-last:' + (cBtns[cBtns.length - 1].innerText || '').trim().substring(0, 30);
             }
+        }
+    }
+    
+    // ── Strategy C: walk up from boost button to find dismiss sibling ────
+    const boostBtn = allClickable.find(b => {
+        const t = (b.innerText || b.textContent || '').toLowerCase();
+        return boostKw.some(k => t.includes(k)) && t.length > 1;
+    });
+    if (boostBtn) {
+        let node = boostBtn.parentElement;
+        for (let depth = 0; depth < 10 && node && node !== document.body; depth++) {
+            const siblings = Array.from(
+                node.querySelectorAll('button, [role="button"], [tabindex="0"]')
+            ).filter(b => {
+                if (b === boostBtn) return false;
+                const t = (b.innerText || b.textContent || '').toLowerCase();
+                const r = b.getBoundingClientRect();
+                return r.width > 0 && r.height > 0 && r.top >= 0
+                    && r.top < window.innerHeight
+                    && t.length > 0
+                    && !boostKw.some(k => t.includes(k));
+            });
+            if (siblings.length > 0) {
+                const target = siblings[siblings.length - 1];
+                target.click();
+                return 'C:' + (target.innerText || '').trim().substring(0, 30);
+            }
+            node = node.parentElement;
         }
     }
     return null;
@@ -794,13 +821,10 @@ async def _register_boost_popup_handler(page) -> None:  # type: ignore[no-untype
     dialogs are left alone.
     """
     try:
-        popup_loc = page.locator(
-            '[data-testid="confirmationSheetDialog"], '
-            '[role="dialog"]:has-text("boost"), '
-            '[role="dialog"]:has-text("Boost"), '
-            '[role="dialog"]:has-text("บูสต์"), '
-            '[role="dialog"]:has-text("ลองบูสต์")'
-        )
+        # Use the popup's Thai title text as the trigger locator.
+        # Premium/new UI boost sheet is often NOT a role=dialog — it's a fixed-position div
+        # inside #layers. Text-based locator is more reliable.
+        popup_loc = page.get_by_text("ลองบูสต์โพสต์นี้", exact=False)
 
         async def _auto_dismiss() -> None:
             await _dismiss_boost_popup(page)
@@ -808,11 +832,20 @@ async def _register_boost_popup_handler(page) -> None:  # type: ignore[no-untype
         await page.add_locator_handler(
             popup_loc, _auto_dismiss, no_wait_after=True
         )
-        log.debug("boost popup handler registered")
+        log.debug("boost popup handler registered (Thai title locator)")
     except Exception:  # noqa: BLE001
-        # add_locator_handler may raise if the page is already closed or
-        # on older Playwright builds — degrade gracefully.
-        pass
+        try:
+            popup_loc_en = page.get_by_text("Try boosting", exact=False)
+            
+            async def _auto_dismiss_en() -> None:
+                await _dismiss_boost_popup(page)
+                
+            await page.add_locator_handler(
+                popup_loc_en, _auto_dismiss_en, no_wait_after=True
+            )
+            log.debug("boost popup handler registered (EN title locator)")
+        except Exception:  # noqa: BLE001
+            pass
 
 
 async def _dismiss_boost_popup(page) -> bool:  # type: ignore[no-untyped-def]
@@ -831,7 +864,19 @@ async def _dismiss_boost_popup(page) -> bool:  # type: ignore[no-untyped-def]
     4. Whole-page getByRole/getByText scan
     5. force=True click  — last resort when pointer-events are blocked
     """
-    # ── Layer 0: JavaScript evaluation (primary — most robust) ───────────
+    # ── Layer 0a: Direct Playwright text match — fastest known-good path ─
+    for _known in ("ไว้ภายหลัง", "Maybe later", "Not now", "ไม่ใช่ตอนนี้", "ข้ามไปก่อน", "ข้าม"):
+        try:
+            btn = page.get_by_text(_known, exact=True).first
+            if await btn.is_visible(timeout=200):
+                await btn.click()
+                await asyncio.sleep(0.8)
+                log.debug("boost popup dismissed via direct text (%s)", _known)
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+
+    # ── Layer 0b: JavaScript evaluation (primary — most robust) ───────────
     try:
         clicked = await page.evaluate(_BOOST_DISMISS_JS, list(_BOOST_DISMISS_LABELS))
         if clicked:
