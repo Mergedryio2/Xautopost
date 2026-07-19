@@ -215,6 +215,9 @@ async def _do_post(
                     "{ get: () => undefined })"
                 )
                 page = await context.new_page()
+                # Proactively handle the 'Try boosting this post!' popup
+                # the instant it appears — independent of the polling loop.
+                await _register_boost_popup_handler(page)
 
                 # Verify session is alive — wait for the SideNav New Post button
                 await page.goto(
@@ -494,8 +497,11 @@ async def _do_reply(
                     "{ get: () => undefined })"
                 )
                 page = await context.new_page()
+                # Proactively handle the 'Try boosting this post!' popup
+                # the instant it appears — independent of the polling loop.
+                await _register_boost_popup_handler(page)
 
-                # Canonical reply URL. X redirects this to the
+
                 # handle-prefixed form once the page settles — that's fine.
                 await page.goto(
                     f"https://x.com/i/web/status/{target_tweet_id}",
@@ -671,75 +677,147 @@ async def _is_target_gone(page) -> bool:  # type: ignore[no-untyped-def]
     return False
 
 
+# ── Boost-popup helpers ──────────────────────────────────────────────────────
+
+# Dismiss labels tried in order. Lowercase for JS comparison; Playwright
+# get_by_role/text comparisons are case-insensitive by default.
+_BOOST_DISMISS_LABELS: tuple[str, ...] = (
+    "maybe later",
+    "not now",
+    "no thanks",
+    "skip",
+    "dismiss",
+    "บางทีภายหลัง",
+    "ไม่ใช่ตอนนี้",
+    "ข้ามไปก่อน",
+)
+
+# JS snippet that searches all visible buttons for a dismiss label.
+# Returns the matched label string on success, null if nothing found.
+_BOOST_DISMISS_JS = """
+(labels) => {
+    const btns = Array.from(
+        document.querySelectorAll('button, [role="button"]')
+    );
+    for (const label of labels) {
+        const btn = btns.find(b => {
+            const t = (b.innerText || b.textContent || '').trim().toLowerCase();
+            return t === label || t.startsWith(label);
+        });
+        if (btn) {
+            const r = btn.getBoundingClientRect();
+            // Only click if actually on-screen and sized.
+            if (r.width > 0 && r.height > 0 && r.top >= 0 && r.top < window.innerHeight) {
+                btn.click();
+                return label;
+            }
+        }
+    }
+    return null;
+}
+"""
+
+
+async def _register_boost_popup_handler(page) -> None:  # type: ignore[no-untyped-def]
+    """Register a Playwright locator handler so the 'Try boosting this
+    post!' popup is dismissed the INSTANT it becomes visible — completely
+    independently of the polling loop.
+
+    page.add_locator_handler() (Playwright ≥ 1.42) fires our callback
+    whenever the given locator transitions to visible. We use a broad
+    role=dialog locator so we catch the popup regardless of whether X
+    renames its data-testid. The handler itself calls _dismiss_boost_popup
+    which only clicks when it finds a known dismiss label — so unrelated
+    dialogs are left alone.
+    """
+    try:
+        popup_loc = page.locator(
+            '[data-testid="confirmationSheetDialog"], '
+            '[role="dialog"]:has-text("boost"), '
+            '[role="dialog"]:has-text("Boost")'
+        )
+
+        async def _auto_dismiss() -> None:
+            await _dismiss_boost_popup(page)
+
+        await page.add_locator_handler(
+            popup_loc, _auto_dismiss, no_wait_after=True
+        )
+        log.debug("boost popup handler registered")
+    except Exception:  # noqa: BLE001
+        # add_locator_handler may raise if the page is already closed or
+        # on older Playwright builds — degrade gracefully.
+        pass
+
+
 async def _dismiss_boost_popup(page) -> bool:  # type: ignore[no-untyped-def]
     """Detect and dismiss X's 'Try boosting this post!' upsell popup.
 
-    Strategy (layered, most-specific first):
+    Called both from the proactive locator handler AND opportunistically
+    inside the post/reply polling loop.
 
-    1. data-testid="confirmationSheetDialog" + button text  (original)
-    2. role="dialog" + getByRole('button') with dismiss labels  (ARIA-robust)
-    3. Whole-page getByRole('button') scan for dismiss labels  (fallback)
-    4. force=True click as last resort when pointer-events are blocked
+    Strategy (fastest / most reliable first):
 
-    Dismiss labels tried (EN + TH): "Maybe later", "Not now",
-    "บางทีภายหลัง", "ไม่ใช่ตอนนี้", "ข้ามไปก่อน".
-    Timeout per probe is 600ms (up from 300ms) so slow-animating popups
-    that appear after the reply submit hotkey are caught within the first
-    few polling iterations.
+    1. JavaScript DOM search  — queries live DOM directly, immune to
+       testid renames. Clicks the first on-screen button whose text
+       matches a known dismiss label.
+    2. data-testid="confirmationSheetDialog" + Playwright text locator
+    3. role="dialog" scope — ARIA-robust against testid changes
+    4. Whole-page getByRole/getByText scan
+    5. force=True click  — last resort when pointer-events are blocked
     """
-    _DISMISS_LABELS = (
-        "Maybe later",
-        "Not now",
-        "บางทีภายหลัง",
-        "ไม่ใช่ตอนนี้",
-        "ข้ามไปก่อน",
-    )
+    # ── Layer 0: JavaScript evaluation (primary — most robust) ───────────
+    try:
+        clicked = await page.evaluate(_BOOST_DISMISS_JS, list(_BOOST_DISMISS_LABELS))
+        if clicked:
+            await asyncio.sleep(0.8)  # let dialog animate out
+            log.debug("boost popup dismissed via JS eval (%s)", clicked)
+            return True
+    except Exception:  # noqa: BLE001
+        pass
 
-    # ── Layer 1: original testid ─────────────────────────────────────────
+    # ── Layer 1: testid (original selector) ──────────────────────────────
     try:
         dialog = page.locator('[data-testid="confirmationSheetDialog"]').first
-        if await dialog.is_visible(timeout=600):
-            for label in _DISMISS_LABELS:
+        if await dialog.is_visible(timeout=400):
+            for label in _BOOST_DISMISS_LABELS:
                 try:
                     btn = dialog.get_by_text(label, exact=False).first
-                    if await btn.is_visible(timeout=300):
+                    if await btn.is_visible(timeout=200):
                         await btn.click()
-                        await asyncio.sleep(0.6)
-                        log.debug("boost popup dismissed via confirmationSheetDialog (%s)", label)
+                        await asyncio.sleep(0.8)
+                        log.debug("boost popup dismissed via testid (%s)", label)
                         return True
                 except Exception:  # noqa: BLE001
                     continue
     except Exception:  # noqa: BLE001
         pass
 
-    # ── Layer 2: any role=dialog — robust against testid renames ─────────
+    # ── Layer 2: role=dialog scope ────────────────────────────────────────
     try:
         dialogs = page.locator('[role="dialog"]')
         count = await dialogs.count()
         for i in range(count):
             d = dialogs.nth(i)
             try:
-                if not await d.is_visible(timeout=200):
+                if not await d.is_visible(timeout=150):
                     continue
-                # getByRole within dialog scope
-                for label in _DISMISS_LABELS:
+                for label in _BOOST_DISMISS_LABELS:
                     try:
                         btn = d.get_by_role("button", name=label)
-                        if await btn.is_visible(timeout=200):
+                        if await btn.is_visible(timeout=150):
                             await btn.click()
-                            await asyncio.sleep(0.6)
+                            await asyncio.sleep(0.8)
                             log.debug("boost popup dismissed via role=dialog (%s)", label)
                             return True
                     except Exception:  # noqa: BLE001
                         continue
-                # text fallback within dialog scope
-                for label in _DISMISS_LABELS:
                     try:
                         btn = d.get_by_text(label, exact=False).first
-                        if await btn.is_visible(timeout=200):
+                        if await btn.is_visible(timeout=150):
                             await btn.click()
-                            await asyncio.sleep(0.6)
-                            log.debug("boost popup dismissed via role=dialog text (%s)", label)
+                            await asyncio.sleep(0.8)
+                            log.debug("boost popup dismissed via dialog text (%s)", label)
                             return True
                     except Exception:  # noqa: BLE001
                         continue
@@ -748,29 +826,29 @@ async def _dismiss_boost_popup(page) -> bool:  # type: ignore[no-untyped-def]
     except Exception:  # noqa: BLE001
         pass
 
-    # ── Layer 3: whole-page button scan ──────────────────────────────────
+    # ── Layer 3: whole-page getByRole ─────────────────────────────────────
     try:
-        for label in _DISMISS_LABELS:
+        for label in _BOOST_DISMISS_LABELS:
             try:
                 btn = page.get_by_role("button", name=label)
-                if await btn.is_visible(timeout=200):
+                if await btn.is_visible(timeout=150):
                     await btn.click()
-                    await asyncio.sleep(0.6)
-                    log.debug("boost popup dismissed via page getByRole (%s)", label)
+                    await asyncio.sleep(0.8)
+                    log.debug("boost popup dismissed via getByRole (%s)", label)
                     return True
             except Exception:  # noqa: BLE001
                 continue
     except Exception:  # noqa: BLE001
         pass
 
-    # ── Layer 4: text-scan + force click (pointer-events blocked) ────────
+    # ── Layer 4: force click (pointer-events blocked) ─────────────────────
     try:
-        for label in _DISMISS_LABELS:
+        for label in _BOOST_DISMISS_LABELS:
             try:
                 btn = page.get_by_text(label, exact=False).first
-                if await btn.is_visible(timeout=150):
+                if await btn.is_visible(timeout=100):
                     await btn.click(force=True)
-                    await asyncio.sleep(0.6)
+                    await asyncio.sleep(0.8)
                     log.debug("boost popup dismissed via force click (%s)", label)
                     return True
             except Exception:  # noqa: BLE001
@@ -779,6 +857,7 @@ async def _dismiss_boost_popup(page) -> bool:  # type: ignore[no-untyped-def]
         pass
 
     return False
+
 
 
 async def _check_for_error(page) -> str | None:  # type: ignore[no-untyped-def]
