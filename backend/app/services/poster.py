@@ -215,9 +215,6 @@ async def _do_post(
                     "{ get: () => undefined })"
                 )
                 page = await context.new_page()
-                # Proactively handle the 'Try boosting this post!' popup
-                # the instant it appears — independent of the polling loop.
-                await _register_boost_popup_handler(page)
 
                 # Verify session is alive — wait for the SideNav New Post button
                 await page.goto(
@@ -314,9 +311,6 @@ async def _do_post(
                 # which is closer to organic posting than a sub-second
                 # burst from N IPs.
                 url_before = page.url
-                # Dismiss any boost/upsell popup that may have appeared
-                # during compose — some accounts see it before submit.
-                await _dismiss_boost_popup(page)
                 await page.keyboard.press(_POST_HOTKEY)
 
                 # Poll for outcome up to ~20s. Success signals:
@@ -334,7 +328,6 @@ async def _do_post(
                 )
                 for _ in range(40):
                     await asyncio.sleep(0.5)
-                    await _dismiss_boost_popup(page)
                     err = await _check_for_error(page)
                     if err:
                         return PostResult(ok=False, error=err)
@@ -497,11 +490,8 @@ async def _do_reply(
                     "{ get: () => undefined })"
                 )
                 page = await context.new_page()
-                # Proactively handle the 'Try boosting this post!' popup
-                # the instant it appears — independent of the polling loop.
-                await _register_boost_popup_handler(page)
 
-
+                # Canonical reply URL. X redirects this to the
                 # handle-prefixed form once the page settles — that's fine.
                 await page.goto(
                     f"https://x.com/i/web/status/{target_tweet_id}",
@@ -565,9 +555,6 @@ async def _do_reply(
                 await button.wait_for(timeout=button_timeout)
 
                 url_before_reply = page.url
-                # Dismiss any boost/upsell popup that may have appeared
-                # during compose — some accounts see it before submit.
-                await _dismiss_boost_popup(page)
                 await page.keyboard.press(_POST_HOTKEY)
 
                 # Polling block — same shape as post_tweet's outcome
@@ -585,7 +572,6 @@ async def _do_reply(
                 )
                 for _ in range(40):
                     await asyncio.sleep(0.5)
-                    await _dismiss_boost_popup(page)
                     err = await _check_for_error(page)
                     if err:
                         return PostResult(ok=False, error=err)
@@ -675,176 +661,6 @@ async def _is_target_gone(page) -> bool:  # type: ignore[no-untyped-def]
     except Exception:  # noqa: BLE001
         pass
     return False
-
-
-# ── Boost-popup helpers ──────────────────────────────────────────────────────
-
-# Dismiss labels tried in order. Lowercase for JS comparison; Playwright
-# get_by_role/text comparisons are case-insensitive by default.
-_BOOST_DISMISS_LABELS: tuple[str, ...] = (
-    "maybe later",
-    "not now",
-    "no thanks",
-    "skip",
-    "dismiss",
-    "later",
-    "close",
-    "back",
-    # Thai variants X has been observed using
-    "บางทีภายหลัง",      # Maybe later
-    "บางทีในภายหลัง",   # Maybe later (alt)
-    "ไว้ภายหลัง",       # Later
-    "ภายหลัง",           # Later (short)
-    "ทีหลัง",             # Later (informal)
-    "ไม่ใช่ตอนนี้",     # Not now
-    "ไม่เดี๋ยวนี้",    # Not now (alt)
-    "ข้ามไปก่อน",       # Skip for now
-    "ข้าม",               # Skip
-    "ยกเลิก",             # Cancel
-    "ไม่ขอบคุณ",         # No thanks
-    "ไม่ต้องการตอนนี้",  # Don’t want now
-    "ปิด",               # Close
-    "กลับ",              # Back
-)
-
-# JS snippet that searches all visible buttons for a dismiss label OR
-# (fallback) finds the secondary button inside any boost-related dialog.
-# Returns the matched label / button text on success, null if nothing found.
-_BOOST_DISMISS_JS = """
-(labels) => {
-    // 1. Find all potential blocking containers (dialogs, bottom sheets, full screen overlays)
-    // In Premium accounts, these might just be divs attached directly to #layers
-    const containers = Array.from(document.querySelectorAll(
-        '[role="dialog"], [role="alertdialog"], [data-testid="confirmationSheetDialog"], [data-testid*="sheet"], [data-testid*="modal"], #layers > div > div > div'
-    )).filter(d => {
-        const r = d.getBoundingClientRect();
-        return r.width > 0 && r.height > 0;
-    });
-
-    // 2. Filter containers that actually contain "boost/promote" keywords
-    const boostKw = ['boost', 'promot', 'บูสต์', 'โปรโมท'];
-    const boostContainers = containers.filter(container => {
-        const text = (container.innerText || '').toLowerCase();
-        const aria = (container.getAttribute('aria-label') || '').toLowerCase();
-        const combined = text + ' ' + aria;
-        return boostKw.some(k => combined.includes(k));
-    });
-
-    let foundBtn = null;
-    let strategy = '';
-
-    // 3. For each boost container, find the dismiss button
-    for (const container of boostContainers) {
-        const btns = Array.from(
-            container.querySelectorAll('button, [role="button"], [tabindex="0"]')
-        ).filter(b => {
-            const r = b.getBoundingClientRect();
-            return r.width > 0 && r.height > 0;
-        });
-
-        // Strategy A: Find explicit dismiss buttons inside the container
-        foundBtn = btns.find(b => {
-            const t = (b.innerText || b.textContent || '').toLowerCase();
-            const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-            const combined = t + ' ' + aria;
-            // Matches "maybe later", "close", "back", "ปิด" etc, but not "boost"
-            return (combined.length > 0 || b.querySelector('svg')) && 
-                   labels.some(l => combined.includes(l)) && 
-                   !boostKw.some(k => combined.includes(k));
-        });
-        if (foundBtn) { strategy = 'A'; break; }
-
-        // Strategy B: If no explicit label, click the last secondary button
-        // Upsells usually have primary action (Boost) first/prominent, and secondary (Cancel/Back) last
-        if (btns.length > 1) {
-            // Filter out obvious boost buttons
-            const nonBoostBtns = btns.filter(b => {
-                const t = (b.innerText || b.textContent || '').toLowerCase();
-                const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-                return !boostKw.some(k => (t + ' ' + aria).includes(k));
-            });
-            if (nonBoostBtns.length > 0) {
-                foundBtn = nonBoostBtns[nonBoostBtns.length - 1]; // last non-boost button
-                strategy = 'B';
-                break;
-            }
-        }
-    }
-
-    // 4. Global Fallback (Strategy C): if no container found (maybe X changed DOM drastically)
-    // Find ANY button on the whole screen that matches dismiss labels and doesn't match boost
-    if (!foundBtn) {
-        const allClickable = Array.from(document.querySelectorAll(
-            'button, [role="button"], [tabindex="0"]'
-        )).filter(b => {
-            const r = b.getBoundingClientRect();
-            return r.width > 0 && r.height > 0 && r.top >= 0 && r.top < window.innerHeight;
-        });
-
-        foundBtn = allClickable.find(b => {
-            const t = (b.innerText || b.textContent || '').trim().toLowerCase();
-            const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
-            const combined = t + ' ' + aria;
-            return combined.length > 0 && labels.some(l => combined.includes(l)) && !boostKw.some(k => combined.includes(k));
-        });
-        if (foundBtn) { strategy = 'C'; }
-    }
-
-    if (foundBtn) {
-        foundBtn.click();
-        const info = (foundBtn.innerText || foundBtn.getAttribute('aria-label') || 'icon').trim().substring(0, 30);
-        return strategy + ':' + info;
-    }
-    return null;
-}
-"""
-
-
-async def _register_boost_popup_handler(page) -> None:  # type: ignore[no-untyped-def]
-    """Register a Playwright locator handler so the 'Try boosting this
-    post!' popup is dismissed the INSTANT it becomes visible — completely
-    independently of the polling loop.
-
-    page.add_locator_handler() (Playwright ≥ 1.42) fires our callback
-    whenever the given locator transitions to visible. We use a broad
-    role=dialog locator so we catch the popup regardless of whether X
-    renames its data-testid. The handler itself calls _dismiss_boost_popup
-    which only clicks when it finds a known dismiss label — so unrelated
-    dialogs are left alone.
-    """
-    try:
-        # Use a regex locator to catch standard and premium variants across EN/TH
-        popup_loc = page.locator("text=/(ลองบูสต์โพสต์นี้|โปรโมทโพสต์|โปรโมท|Try boosting|Promote)/i").first
-
-        async def _auto_dismiss() -> None:
-            await _dismiss_boost_popup(page)
-
-        await page.add_locator_handler(
-            popup_loc, _auto_dismiss, no_wait_after=True, times=3
-        )
-        log.debug("boost popup handler registered (Premium regex locator)")
-    except Exception:  # noqa: BLE001
-        pass
-
-
-async def _dismiss_boost_popup(page) -> bool:  # type: ignore[no-untyped-def]
-    """Detect and dismiss X's 'Try boosting this post!' upsell popup.
-
-    This function relies entirely on an optimized JavaScript evaluation 
-    (_BOOST_DISMISS_JS) that executes in <5ms. We've removed Playwright 
-    Python loops to prevent massive event loop blocking during polling.
-    """
-    try:
-        clicked = await page.evaluate(_BOOST_DISMISS_JS, list(_BOOST_DISMISS_LABELS))
-        if clicked:
-            await asyncio.sleep(0.5)  # let dialog animate out
-            log.debug("boost popup dismissed via JS eval (%s)", clicked)
-            return True
-    except Exception:  # noqa: BLE001
-        pass
-        
-    return False
-
 
 
 async def _check_for_error(page) -> str | None:  # type: ignore[no-untyped-def]
