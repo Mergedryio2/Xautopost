@@ -715,32 +715,35 @@ async def _do_reply(
             log.info("Self-Reply Mode: Navigating to new reply for comment-to-comment chain")
             navigated = False
             
-            if new_tweet_id:
+            # We MUST use soft-navigation (clicking the Toast) if possible.
+            # Hard-navigating (page.goto) hits X's edge servers, which often haven't indexed
+            # the new tweet yet, resulting in "This post is unavailable".
+            # Soft-navigation uses X's local state so the tweet appears instantly.
+            log.info("Self-Reply Mode: Waiting for Toast to soft-navigate to new reply")
+            try:
+                toast_link = page.locator('[data-testid="toast"] a').first
+                await toast_link.wait_for(state="attached", timeout=10000)
+                # Use evaluate to click so we bypass any invisible overlays
+                await toast_link.evaluate('el => el.click()')
+                
+                # Wait for the status page to render the main tweet
+                await page.locator('article[data-testid="tweet"][tabindex="-1"]').first.wait_for(state="visible", timeout=15000)
+                navigated = True
+                log.info("Soft-navigation via Toast succeeded.")
+            except Exception as e:
+                log.warning(f"Toast soft-navigation failed: {e}")
+                
+            if not navigated and new_tweet_id:
+                log.info("Fallback: Hard-navigating using intercepted tweet ID")
                 try:
-                    # Give X's backend a moment to index the new tweet before navigating
-                    await asyncio.sleep(2)
-                    target_url = f"https://x.com/{handle}/status/{new_tweet_id}" if handle else f"https://x.com/i/web/status/{new_tweet_id}"
-                    log.info(f"Using intercepted tweet ID to navigate: {target_url}")
+                    # Give X's backend a much longer moment to index the new tweet
+                    await asyncio.sleep(6)
+                    target_url = f"https://x.com/i/web/status/{new_tweet_id}"
                     await page.goto(target_url, wait_until="domcontentloaded")
                     await page.locator('article[data-testid="tweet"]').first.wait_for(state="visible", timeout=15000)
                     navigated = True
                 except Exception as e:
-                    log.warning(f"Failed to navigate using new_tweet_id: {e}")
-            
-            if not navigated:
-                # Fallback to Toast
-                log.info("Self-Reply Mode: Waiting for Toast to navigate to new reply")
-                try:
-                    toast_link = page.locator('[data-testid="toast"] a').first
-                    await toast_link.wait_for(state="attached", timeout=10000)
-                    href = await toast_link.get_attribute("href")
-                    if href:
-                        await asyncio.sleep(2)
-                        await page.goto(f"https://x.com{href}", wait_until="domcontentloaded")
-                        await page.locator('article[data-testid="tweet"]').first.wait_for(state="visible", timeout=15000)
-                        navigated = True
-                except Exception as e:
-                    log.warning(f"Could not use toast to navigate: {e}")
+                    log.warning(f"Hard-navigation failed: {e}")
             
             if navigated:
                 log.info("Successfully navigated to new reply status page.")
