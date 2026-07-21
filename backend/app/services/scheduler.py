@@ -19,7 +19,8 @@ from app.db.utils import now_local, utcnow
 from app.services.ai import generate_content
 from app.services.manual import apply_decoration, split_manual
 from app.services.media import extract_media_tokens, resolve_media_ids
-from app.services.poster import post_reply, post_tweet
+from app.services.poster import post_reply, post_tweet, close_session
+import asyncio
 from app.services.tweet_scanner import scan_manager
 
 log = logging.getLogger(__name__)
@@ -214,6 +215,17 @@ class RotationScheduler:
             self._scheduler.remove_job(self._job_id(operator_id))
         except JobLookupError:
             pass
+
+        # Close persistent browser sessions for this operator's accounts
+        try:
+            loop = asyncio.get_running_loop()
+            with SessionLocal() as db:
+                accounts = db.query(XAccount.id).filter(XAccount.operator_id == operator_id).all()
+                for (acc_id,) in accounts:
+                    loop.create_task(close_session(acc_id))
+        except RuntimeError:
+            pass # No running event loop
+
         self._schedule_operator(operator_id)
 
     def refresh_account(self, account_id: int) -> None:
