@@ -723,6 +723,12 @@ async def _do_reply(
             try:
                 toast_link = page.locator('[data-testid="toast"] a').first
                 await toast_link.wait_for(state="attached", timeout=10000)
+                
+                # Give React time to bind the onClick handler on slower machines (Windows)
+                # If we click too fast, the browser falls back to a standard <a href> hard-reload,
+                # which triggers the eventual consistency bug!
+                await asyncio.sleep(2)
+                
                 # Use evaluate to click so we bypass any invisible overlays
                 await toast_link.evaluate('el => el.click()')
                 
@@ -736,9 +742,10 @@ async def _do_reply(
             if not navigated and new_tweet_id:
                 log.info("Fallback: Hard-navigating using intercepted tweet ID")
                 try:
-                    # Give X's backend a much longer moment to index the new tweet
-                    await asyncio.sleep(6)
-                    target_url = f"https://x.com/i/web/status/{new_tweet_id}"
+                    # Give X's backend a much longer moment to index the new tweet (10s)
+                    await asyncio.sleep(10)
+                    clean_handle = handle.lstrip('@') if handle else None
+                    target_url = f"https://x.com/{clean_handle}/status/{new_tweet_id}" if clean_handle else f"https://x.com/i/web/status/{new_tweet_id}"
                     await page.goto(target_url, wait_until="domcontentloaded")
                     await page.locator('article[data-testid="tweet"]').first.wait_for(state="visible", timeout=15000)
                     navigated = True
