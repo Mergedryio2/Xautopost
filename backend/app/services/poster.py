@@ -38,6 +38,7 @@ class BrowserSession:
 
 _ACTIVE_SESSIONS: dict[int, BrowserSession] = {}
 _SESSION_LOCK = asyncio.Lock()
+_CHAIN_URLS: dict[int, str] = {}
 
 async def close_session(account_id: int) -> None:
     """Safely close and remove a cached browser session for an account."""
@@ -524,8 +525,17 @@ async def _do_reply(
                 page = session.page
 
         # ── Self-Reply Mode Logic ────────────────────────────────────
+        # ── Self-Reply Mode Logic ────────────────────────────────────
         try:
-            if session.is_on_status_page:
+            target_chain_url = _CHAIN_URLS.get(account_id)
+            if target_chain_url and session.is_on_status_page and target_chain_url in page.url:
+                log.info("Self-Reply Mode: Already on the correct status page, skipping navigation")
+            elif target_chain_url:
+                log.info(f"Self-Reply Mode: Resuming chain from saved URL: {target_chain_url}")
+                await page.goto(target_chain_url, wait_until="domcontentloaded")
+                await page.locator('article[data-testid="tweet"]').first.wait_for(state="visible", timeout=15000)
+                session.is_on_status_page = True
+            elif session.is_on_status_page:
                 log.info("Self-Reply Mode: Already on status page, skipping profile navigation")
                 # On status page, the editor might already be focused or present
                 # No need to click the reply button on the timeline
@@ -550,6 +560,15 @@ async def _do_reply(
                 await reply_btn.wait_for(state="visible", timeout=10000)
                 await reply_btn.click()
         except Exception as e:
+            try:
+                if await _is_target_gone(page):
+                    log.warning("Self-Reply Mode: Target tweet is gone or unavailable")
+                    _CHAIN_URLS.pop(account_id, None)
+                    session.is_on_status_page = False
+                    return PostResult(ok=False, error="โพสต์เป้าหมายถูกลบหรือเข้าถึงไม่ได้ (Chain reset)")
+            except Exception:
+                pass
+                
             return PostResult(
                 ok=False,
                 error=f"ไม่พบโพสต์บนโปรไฟล์ หรือกด Reply ไม่ได้: {e}",
