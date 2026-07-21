@@ -717,7 +717,9 @@ async def _do_reply(
             
             if new_tweet_id:
                 try:
-                    target_url = f"https://x.com/i/web/status/{new_tweet_id}"
+                    # Give X's backend a moment to index the new tweet before navigating
+                    await asyncio.sleep(2)
+                    target_url = f"https://x.com/{handle}/status/{new_tweet_id}" if handle else f"https://x.com/i/web/status/{new_tweet_id}"
                     log.info(f"Using intercepted tweet ID to navigate: {target_url}")
                     await page.goto(target_url, wait_until="domcontentloaded")
                     await page.locator('article[data-testid="tweet"]').first.wait_for(state="visible", timeout=15000)
@@ -733,6 +735,7 @@ async def _do_reply(
                     await toast_link.wait_for(state="attached", timeout=10000)
                     href = await toast_link.get_attribute("href")
                     if href:
+                        await asyncio.sleep(2)
                         await page.goto(f"https://x.com{href}", wait_until="domcontentloaded")
                         await page.locator('article[data-testid="tweet"]').first.wait_for(state="visible", timeout=15000)
                         navigated = True
