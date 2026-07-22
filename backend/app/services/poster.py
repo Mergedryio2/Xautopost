@@ -38,7 +38,7 @@ class BrowserSession:
 
 _ACTIVE_SESSIONS: dict[int, BrowserSession] = {}
 _SESSION_LOCK = asyncio.Lock()
-_CHAIN_URLS: dict[int, str] = {}
+_CHAIN_TWEET_IDS: dict[int, str] = {}
 
 async def close_session(account_id: int) -> None:
     """Safely close and remove a cached browser session for an account."""
@@ -524,51 +524,55 @@ async def _do_reply(
                 log.info(f"Reusing existing browser session for account_id={account_id}")
                 page = session.page
 
-        # ── Self-Reply Mode Logic ────────────────────────────────────
-        # ── Self-Reply Mode Logic ────────────────────────────────────
+        # ── Self-Reply Mode: Deferred Navigation ─────────────────────
+        # If we have a saved tweet ID from a previous cycle, navigate to
+        # its status page NOW (it's been minutes/hours — guaranteed indexed).
+        # Otherwise, fall back to the profile → first tweet → reply flow.
         try:
-            target_chain_url = _CHAIN_URLS.get(account_id)
-            if target_chain_url and session.is_on_status_page and target_chain_url in page.url:
-                log.info("Self-Reply Mode: Already on the correct status page, skipping navigation")
-            elif target_chain_url:
-                log.info(f"Self-Reply Mode: Resuming chain from saved URL: {target_chain_url}")
-                await page.goto(target_chain_url, wait_until="domcontentloaded")
-                await page.locator('article[data-testid="tweet"]').first.wait_for(state="visible", timeout=15000)
-                session.is_on_status_page = True
-            elif session.is_on_status_page:
-                log.info("Self-Reply Mode: Already on status page, skipping profile navigation")
-                # On status page, the editor might already be focused or present
-                # No need to click the reply button on the timeline
+            chain_tweet_id = _CHAIN_TWEET_IDS.get(account_id)
+            if chain_tweet_id:
+                clean_handle = handle.lstrip('@') if handle else None
+                chain_url = (
+                    f"https://x.com/{clean_handle}/status/{chain_tweet_id}"
+                    if clean_handle
+                    else f"https://x.com/i/web/status/{chain_tweet_id}"
+                )
+                log.info(f"Self-Reply Mode: Navigating to chained tweet: {chain_url}")
+                await page.goto(chain_url, wait_until="domcontentloaded")
+                await page.locator('article[data-testid="tweet"]').first.wait_for(
+                    state="visible", timeout=15000
+                )
+                # Check if the page shows "unavailable" — the tweet may have been deleted
+                if await _is_target_gone(page):
+                    log.warning("Self-Reply Mode: Chained tweet is gone, resetting chain")
+                    _CHAIN_TWEET_IDS.pop(account_id, None)
+                    return PostResult(
+                        ok=False,
+                        error="โพสต์เป้าหมาย chain ถูกลบหรือเข้าถึงไม่ได้ (Chain reset)",
+                    )
+                log.info("Self-Reply Mode: On chained status page, ready to reply")
             else:
-                log.info("Self-Reply Mode: Fetching latest tweet ID from profile")
+                log.info("Self-Reply Mode: No chain — fetching latest tweet from profile")
                 if handle:
-                    log.info(f"Navigating directly to profile: https://x.com/{handle}")
-                    await page.goto(f"https://x.com/{handle}", wait_until="domcontentloaded")
+                    clean = handle.lstrip('@')
+                    log.info(f"Navigating directly to profile: https://x.com/{clean}")
+                    await page.goto(f"https://x.com/{clean}", wait_until="domcontentloaded")
                 else:
                     await page.goto("https://x.com/", wait_until="domcontentloaded")
                     profile_link = page.locator('[data-testid="AppTabBar_Profile_Link"]').first
                     await profile_link.wait_for(state="visible", timeout=15000)
                     await profile_link.click()
-                
+
                 # Wait for timeline tweets to render
                 first_tweet = page.locator('[data-testid="tweet"]').first
                 await first_tweet.wait_for(state="visible", timeout=15000)
-                
-                # Click the reply icon on the timeline directly (no page.goto)
+
+                # Click the reply icon on the timeline directly
                 log.info("Self-Reply Mode: Clicking reply on the timeline directly")
                 reply_btn = first_tweet.locator('[data-testid="reply"]').first
                 await reply_btn.wait_for(state="visible", timeout=10000)
                 await reply_btn.click()
         except Exception as e:
-            try:
-                if await _is_target_gone(page):
-                    log.warning("Self-Reply Mode: Target tweet is gone or unavailable")
-                    _CHAIN_URLS.pop(account_id, None)
-                    session.is_on_status_page = False
-                    return PostResult(ok=False, error="โพสต์เป้าหมายถูกลบหรือเข้าถึงไม่ได้ (Chain reset)")
-            except Exception:
-                pass
-                
             return PostResult(
                 ok=False,
                 error=f"ไม่พบโพสต์บนโปรไฟล์ หรือกด Reply ไม่ได้: {e}",
@@ -729,55 +733,18 @@ async def _do_reply(
                 page.remove_listener("response", handle_response)
             except Exception:
                 pass
-                
-            # ── Chain Topology Logic ────────────────────────────────────
-            log.info("Self-Reply Mode: Navigating to new reply for comment-to-comment chain")
-            navigated = False
-            
-            # We MUST use soft-navigation (clicking the Toast) if possible.
-            # Hard-navigating (page.goto) hits X's edge servers, which often haven't indexed
-            # the new tweet yet, resulting in "This post is unavailable".
-            # Soft-navigation uses X's local state so the tweet appears instantly.
-            log.info("Self-Reply Mode: Waiting for Toast to soft-navigate to new reply")
-            try:
-                toast_link = page.locator('[data-testid="toast"] a').first
-                await toast_link.wait_for(state="attached", timeout=10000)
-                
-                # Give React time to bind the onClick handler on slower machines (Windows)
-                # If we click too fast, the browser falls back to a standard <a href> hard-reload,
-                # which triggers the eventual consistency bug!
-                await asyncio.sleep(2)
-                
-                # Use evaluate to click so we bypass any invisible overlays
-                await toast_link.evaluate('el => el.click()')
-                
-                # Wait for the status page to render the main tweet
-                await page.locator('article[data-testid="tweet"][tabindex="-1"]').first.wait_for(state="visible", timeout=15000)
-                navigated = True
-                log.info("Soft-navigation via Toast succeeded.")
-            except Exception as e:
-                log.warning(f"Toast soft-navigation failed: {e}")
-                
-            if not navigated and new_tweet_id:
-                log.info("Fallback: Hard-navigating using intercepted tweet ID")
-                try:
-                    # Give X's backend a much longer moment to index the new tweet (10s)
-                    await asyncio.sleep(10)
-                    clean_handle = handle.lstrip('@') if handle else None
-                    target_url = f"https://x.com/{clean_handle}/status/{new_tweet_id}" if clean_handle else f"https://x.com/i/web/status/{new_tweet_id}"
-                    await page.goto(target_url, wait_until="domcontentloaded")
-                    await page.locator('article[data-testid="tweet"]').first.wait_for(state="visible", timeout=15000)
-                    navigated = True
-                except Exception as e:
-                    log.warning(f"Hard-navigation failed: {e}")
-            
-            if navigated:
-                log.info("Successfully navigated to new reply status page.")
-                session.is_on_status_page = True
+
+            # ── Deferred Navigation: Save tweet ID for NEXT cycle ────────
+            # We do NOT navigate now. The tweet might not be indexed yet
+            # (Eventual Consistency). Instead, we save the ID and navigate
+            # at the START of the next cycle, when it's guaranteed to exist.
+            if new_tweet_id:
+                _CHAIN_TWEET_IDS[account_id] = new_tweet_id
+                log.info(f"Saved chain tweet ID for next cycle: {new_tweet_id}")
             else:
-                log.warning("Could not navigate to new reply. Will fallback to profile next time.")
-                session.is_on_status_page = False
-            
+                log.warning("Could not intercept new tweet ID — chain will reset to profile next cycle")
+                _CHAIN_TWEET_IDS.pop(account_id, None)
+
             return PostResult(ok=True)
     except Exception as e:
         log.exception(f"Fatal error in _do_reply, closing session for {account_id}")
