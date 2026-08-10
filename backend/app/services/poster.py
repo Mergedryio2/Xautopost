@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import platform
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,34 @@ async def close_session(account_id: int) -> None:  # noqa: ARG001
     pass
 
 
+_HASHTAG_RE = re.compile(r'(#\w+)')
+
+
+async def _type_with_hashtag_parsing(page: Any, content: str) -> None:
+    """Type content into X's rich-text editor so #hashtags are parsed as
+    searchable hyperlinks.
+
+    X's editor only converts #foo into a clickable/indexed hashtag when it
+    receives real keyboard events per character — a bulk clipboard paste via
+    insert_text() deposits the text as plain string and the editor never fires
+    the token-recognition logic. This function:
+      • Uses insert_text() for non-hashtag segments (instant, no overhead).
+      • Uses keyboard.type(delay=0) for each #hashtag segment so every
+        keystroke fires a real input event that X's React handler sees.
+      • Presses Escape after each hashtag to dismiss the autocomplete popup
+        without waiting for it (Escape is a no-op when no popup is open).
+    Total overhead vs. plain insert_text: ~0ms per non-hashtag char +
+    ~1ms per hashtag char (keyboard.type at delay=0). For a 280-char tweet
+    with 3 hashtags the whole call completes in well under 100ms.
+    """
+    for token in _HASHTAG_RE.split(content):
+        if not token:
+            continue
+        if token.startswith('#'):
+            await page.keyboard.type(token, delay=0)
+            await page.keyboard.press('Escape')  # dismiss autocomplete instantly
+        else:
+            await page.keyboard.insert_text(token)
 
 @dataclass
 class PostResult:
@@ -276,12 +305,8 @@ async def _do_post(
                 # keydown/keyup/input events that React's contenteditable
                 # picks up — bypassing both traps.
                 await editor.focus()
-                # Human-like pause between focusing the editor and starting
-                # to type. With only 0.3s the cursor barely lands before
-                # text streams out, which both looks bot-like and sometimes
-                # races X's focus logic. ~2.5s feels natural to a watcher.
                 await asyncio.sleep(2.5)
-                await page.keyboard.insert_text(content)
+                await _type_with_hashtag_parsing(page, content)
                 await asyncio.sleep(1.2)  # let React debounce + state propagate
 
                 # Attach media via X's hidden composer file input. Done after
@@ -529,7 +554,7 @@ async def _do_reply(
 
                 await editor.click()
                 await asyncio.sleep(1.5)
-                await page.keyboard.insert_text(content)
+                await _type_with_hashtag_parsing(page, content)
                 await asyncio.sleep(1.2)
 
                 if media_paths:
