@@ -71,8 +71,9 @@ class XAccountUpdate(BaseModel):
     # Per-account spacing in seconds. 1s floor matches the UI; 86400s = 24h cap.
     min_interval_seconds: int | None = Field(default=None, ge=1, le=86400)
     max_interval_seconds: int | None = Field(default=None, ge=1, le=86400)
-    active_hours_start: int | None = Field(default=None, ge=0, le=23)
-    active_hours_end: int | None = Field(default=None, ge=0, le=23)
+    # Minutes since midnight (0 = 00:00, 90 = 01:30, 1439 = 23:59).
+    active_hours_start: int | None = Field(default=None, ge=0, le=1439)
+    active_hours_end: int | None = Field(default=None, ge=0, le=1439)
     proxy_id: int | None = None
 
 

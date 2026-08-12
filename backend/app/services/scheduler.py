@@ -706,12 +706,24 @@ class RotationScheduler:
 
 
 def _in_active_window(now: datetime, start: int, end: int) -> bool:
+    """Return True when *now* falls inside the [start, end) window.
+
+    start/end are **minutes since midnight** (0–1439).
+    Legacy values ≤ 23 stored before v0.3.9 are treated as hours and
+    converted automatically so existing settings keep working.
+    """
+    # Backward-compat: legacy hour values stored before v0.3.9
+    if start <= 23 and end <= 23:
+        start = start * 60
+        end = end * 60
+
     if start == end:
         return True  # treated as 24/7
-    h = now.hour
+
+    now_min = now.hour * 60 + now.minute
     if start < end:
-        return start <= h < end
-    return h >= start or h < end  # overnight window
+        return start <= now_min < end
+    return now_min >= start or now_min < end  # overnight window
 
 
 def _pick_reply_target(
