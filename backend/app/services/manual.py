@@ -100,16 +100,30 @@ def apply_decoration(
     account_id: int | None = None,
 ) -> str:
     """Append decorations so the post isn't an exact duplicate of previous
-    identical text. Letters are appended first, then the emoji, so the
-    emoji stays at the visual tail when both are enabled."""
+    identical text. Letters are appended first, then the emoji.
+    If the text ends with hashtags, the decorations are inserted BEFORE the hashtags."""
     if not text:
         return text
     if not with_emoji and not with_letters:
         return text
 
-    parts: list[str] = [text.rstrip()]
+    body = text.rstrip()
+    trailing_hashtags = ""
+    
+    # Extract trailing hashtags (e.g. " #tag1 #tag2") at the very end of the string
+    m = re.search(r'((?:\s*#[^\s#]+)+)\s*$', body)
+    if m:
+        trailing_hashtags = m.group(1).strip()
+        body = body[:m.start()].rstrip()
+
+    parts: list[str] = [body] if body else []
+    
     if with_letters:
         parts.append(_pick_letters())
     if with_emoji:
         parts.append(_pick_emoji(account_id))
+        
+    if trailing_hashtags:
+        parts.append(trailing_hashtags)
+
     return " ".join(parts)

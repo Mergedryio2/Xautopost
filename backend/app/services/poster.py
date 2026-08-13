@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import platform
+import random
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,34 +34,104 @@ async def close_session(account_id: int) -> None:  # noqa: ARG001
     pass
 
 
-_HASHTAG_RE = re.compile(r'(#\w+)')
+# Full browser stealth script. Patches the most common Playwright fingerprints
+# that X (and other bot-detection systems) check:
+#   - navigator.webdriver
+#   - navigator.plugins (Playwright reports 0; real Chrome reports several)
+#   - navigator.languages
+#   - window.chrome (missing in Playwright)
+#   - Notification / permissions query path
+_STEALTH_SCRIPT = """
+(function() {
+  // 1. webdriver flag
+  Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+
+  // 2. Fake plugin list (Chrome has ~5 built-in)
+  const fakePlugins = ['Chrome PDF Plugin','Chrome PDF Viewer','Native Client',
+                       'Shockwave Flash','Microsoft Edge PDF Viewer'];
+  Object.defineProperty(navigator, 'plugins', {
+    get: () => fakePlugins.map(n => ({ name: n, description: n,
+      filename: 'internal', length: 1, item: () => null, namedItem: () => null })),
+  });
+
+  // 3. Languages
+  Object.defineProperty(navigator, 'languages', {
+    get: () => ['th-TH', 'th', 'en-US', 'en'],
+  });
+
+  // 4. chrome runtime (missing in Playwright)
+  if (!window.chrome) { window.chrome = {}; }
+  if (!window.chrome.runtime) { window.chrome.runtime = {}; }
+
+  // 5. Permissions
+  if (navigator.permissions && navigator.permissions.query) {
+    const origQuery = navigator.permissions.query.bind(navigator.permissions);
+    navigator.permissions.query = (p) =>
+      p.name === 'notifications'
+        ? Promise.resolve({ state: Notification.permission, onchange: null })
+        : origQuery(p);
+  }
+
+  // 6. Hardware / Memory spoofing
+  Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+  Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+
+  // 7. Basic WebGL spoofing
+  const getParameter = WebGLRenderingContext.prototype.getParameter;
+  WebGLRenderingContext.prototype.getParameter = function(parameter) {
+    // UNMASKED_VENDOR_WEBGL
+    if (parameter === 37445) { return 'Intel Inc.'; }
+    // UNMASKED_RENDERER_WEBGL
+    if (parameter === 37446) { return 'Intel Iris OpenGL Engine'; }
+    return getParameter(parameter);
+  };
+})();
+"""
 
 
 async def _type_with_hashtag_parsing(page: Any, content: str) -> None:
-    """Type content into X's rich-text editor so #hashtags are parsed as
-    searchable hyperlinks.
+    """Type content at human-plausible speed so X tokenizes #hashtags.
 
-    X's editor only converts #foo into a clickable/indexed hashtag when it
-    receives real keyboard events per character — a bulk clipboard paste via
-    insert_text() deposits the text as plain string and the editor never fires
-    the token-recognition logic. This function:
-      • Uses insert_text() for non-hashtag segments (instant, no overhead).
-      • Uses keyboard.type(delay=0) for each #hashtag segment so every
-        keystroke fires a real input event that X's React handler sees.
-      • Presses Escape after each hashtag to dismiss the autocomplete popup
-        without waiting for it (Escape is a no-op when no popup is open).
-    Total overhead vs. plain insert_text: ~0ms per non-hashtag char +
-    ~1ms per hashtag char (keyboard.type at delay=0). For a 280-char tweet
-    with 3 hashtags the whole call completes in well under 100ms.
+    Uses keyboard.type(char, delay=0) per character with explicit asyncio
+    sleeps to stay under 5 s for 280 chars while looking human:
+      - Normal chars: 10–20 ms
+      - Word boundary (space/newline): 20–80 ms  (slight pause between words)
+    Total for 280 chars: ~3–4.5 s max.
     """
-    for token in _HASHTAG_RE.split(content):
-        if not token:
-            continue
-        if token.startswith('#'):
-            await page.keyboard.type(token, delay=0)
-            await page.keyboard.press('Escape')  # dismiss autocomplete instantly
+    in_hashtag = False
+    for char in content:
+        if char == '#':
+            in_hashtag = True
+        elif in_hashtag and not (char.isalnum() or char == '_'):
+            # Non-word char ends the hashtag — close autocomplete first
+            # so X seals the token before we type the next character.
+            await page.keyboard.press("Escape")
+            in_hashtag = False
+
+        await page.keyboard.type(char, delay=0)
+        if char in (' ', '\n'):
+            await asyncio.sleep(random.uniform(0.010, 0.030))
         else:
-            await page.keyboard.insert_text(token)
+            await asyncio.sleep(random.uniform(0.005, 0.030))
+
+    # If content ends with a hashtag, close the autocomplete popup
+    # so the token is committed before submission.
+    if in_hashtag:
+        await page.keyboard.press("Escape")
+
+
+async def _human_mouse_move(page: Any, x: float, y: float) -> None:
+    """Move mouse to (x, y) via a two-step curved path to avoid teleporting."""
+    try:
+        mid_x = x + random.uniform(-40, 40)
+        mid_y = y + random.uniform(-40, 40)
+        await page.mouse.move(mid_x, mid_y)
+        await asyncio.sleep(random.uniform(0.05, 0.12))
+        await page.mouse.move(x, y)
+        await asyncio.sleep(random.uniform(0.03, 0.08))
+    except Exception:  # noqa: BLE001
+        pass
+
 
 @dataclass
 class PostResult:
@@ -244,10 +315,7 @@ async def _do_post(
                     viewport=None,
                     no_viewport=True,
                 )
-                await context.add_init_script(
-                    "Object.defineProperty(navigator, 'webdriver', "
-                    "{ get: () => undefined })"
-                )
+                await context.add_init_script(_STEALTH_SCRIPT)
                 page = await context.new_page()
 
                 # Verify session is alive — wait for the SideNav New Post button
@@ -264,6 +332,18 @@ async def _do_post(
                         ok=False,
                         error="session หมดอายุ — ลบบัญชีนี้แล้วเพิ่มใหม่ค่ะ",
                     )
+
+                # --- Warm-up phase (Scroll feed ~2 seconds) ---
+                # เลื่อนหน้าฟีดขึ้นลงสั้นๆ เพื่อให้เหมือนคนอ่านฟีดก่อนทวีต (เพิ่ม Trust Score)
+                try:
+                    await asyncio.sleep(random.uniform(0.5, 1.0))
+                    await page.mouse.wheel(0, random.randint(300, 800))
+                    await asyncio.sleep(random.uniform(0.5, 1.0))
+                    await page.mouse.wheel(0, random.randint(-400, 200))
+                    await asyncio.sleep(random.uniform(0.5, 1.0))
+                except Exception:  # noqa: BLE001
+                    pass
+                # ----------------------------------------------
 
                 # Open composer modal (more reliable than navigating to /compose/post)
                 await nav_button.click()
@@ -305,9 +385,9 @@ async def _do_post(
                 # keydown/keyup/input events that React's contenteditable
                 # picks up — bypassing both traps.
                 await editor.focus()
-                await asyncio.sleep(2.5)
+                await asyncio.sleep(random.uniform(0.5, 0.9))
                 await _type_with_hashtag_parsing(page, content)
-                await asyncio.sleep(1.2)  # let React debounce + state propagate
+                await asyncio.sleep(random.uniform(0.5, 1.0))  # let React debounce + state propagate
 
                 # Attach media via X's hidden composer file input. Done after
                 # typing so the visible sequence reads cleanly: text first,
@@ -358,6 +438,8 @@ async def _do_post(
                 )
                 for _ in range(40):
                     await asyncio.sleep(0.5)
+                    if await _dismiss_boost_popup(page):
+                        return PostResult(ok=True)
                     err = await _check_for_error(page)
                     if err:
                         return PostResult(ok=False, error=err)
@@ -507,10 +589,7 @@ async def _do_reply(
                     viewport=None,
                     no_viewport=True,
                 )
-                await context.add_init_script(
-                    "Object.defineProperty(navigator, 'webdriver', "
-                    "{ get: () => undefined })"
-                )
+                await context.add_init_script(_STEALTH_SCRIPT)
                 page = await context.new_page()
 
                 # Canonical reply URL. X redirects this to the
@@ -552,10 +631,26 @@ async def _do_reply(
                         ),
                     )
 
+                # Simulate reading the tweet before replying (human behavior)
+                await asyncio.sleep(random.uniform(1.2, 2.8))
+                # Slight scroll — looks like reading the thread
+                await page.mouse.wheel(0, random.randint(40, 150))
+                await asyncio.sleep(random.uniform(0.3, 0.8))
+
+                # Move mouse toward editor before clicking (no teleport)
+                try:
+                    box = await editor.bounding_box()
+                    if box:
+                        cx = box['x'] + box['width'] * random.uniform(0.2, 0.7)
+                        cy = box['y'] + box['height'] * random.uniform(0.2, 0.8)
+                        await _human_mouse_move(page, cx, cy)
+                except Exception:  # noqa: BLE001
+                    pass
+
                 await editor.click()
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(random.uniform(0.6, 1.4))  # pause before typing
                 await _type_with_hashtag_parsing(page, content)
-                await asyncio.sleep(1.2)
+                await asyncio.sleep(random.uniform(0.6, 1.5))  # review before send
 
                 if media_paths:
                     upload_err = await _attach_media(page, media_paths)
@@ -580,6 +675,8 @@ async def _do_reply(
                 )
                 for _ in range(40):
                     await asyncio.sleep(0.5)
+                    if await _dismiss_boost_popup(page):
+                        return PostResult(ok=True)
                     err = await _check_for_error(page)
                     if err:
                         return PostResult(ok=False, error=err)
@@ -667,6 +764,22 @@ async def _is_target_gone(page) -> bool:  # type: ignore[no-untyped-def]
         ):
             if phrase in lowered:
                 return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+async def _dismiss_boost_popup(page: Any) -> bool:
+    """Dismiss the 'Subscribe to Premium and boost your responses' popup.
+    Returns True if popup was found and dismissed (indicating the post succeeded)."""
+    try:
+        # Match "Maybe later" in English, Thai, Japanese, etc.
+        loc = page.locator('button, [role="button"]').filter(
+            has_text=re.compile(r"maybe later|ไว้คราวหลัง|ไว้ทีหลัง|ไม่ใช่ตอนนี้|อาจจะภายหลัง|後で|Talvez mais tarde|Später", re.IGNORECASE)
+        ).first
+        if await loc.is_visible(timeout=100):
+            await loc.click(timeout=100)
+            return True
     except Exception:  # noqa: BLE001
         pass
     return False
