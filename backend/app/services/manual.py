@@ -39,17 +39,21 @@ def split_manual(body: str) -> list[str]:
 # without changing the meaning. Wider pool = lower duplicate risk.
 EMOJI_POOL: tuple[str, ...] = (
     # botanical / nature
-    "🌸", "🌷", "🌹", "🌺", "🌻", "🌼", "🌿", "🍀", "🍃", "🌱", "☘️", "🪷", "🪻",
+    "🌸", "🌷", "🌹", "🌺", "🌻", "🌼", "🌿", "🍀", "🍃", "🌱", "☘️", "🪷", "🪻", "🪴", "🍄", "🍁", "🍂", "💐", "🌵",
     # sparkle / sky
-    "✨", "⭐", "💫", "🌟", "☀️", "🌙", "☁️", "🌤️", "🌈",
+    "✨", "⭐", "💫", "🌟", "☀️", "🌙", "☁️", "🌤️", "🌈", "🪐", "🌠", "⛅", "❄️", "☄️",
     # hearts (light, won't change tone too much)
-    "🤍", "🩷", "💛", "💚", "🩵", "💜",
-    # cozy / drinks
-    "☕", "🍵", "🧋",
-    # bubbles / waves / butterflies
-    "🫧", "🌊", "🦋",
+    "🤍", "🩷", "💛", "💚", "🩵", "💜", "🤎", "🖤", "🫶", "💖", "💝", "💘",
+    # cozy / drinks / bakery
+    "☕", "🍵", "🧋", "🥛", "🧁", "🍰", "🍩", "🥞", "🥐", "🍞",
+    # bubbles / waves / butterflies / cute elements
+    "🫧", "🌊", "🦋", "🎀", "🪄", "🎈", "🧸", "🪞",
     # fruit (light, common)
-    "🍓", "🍑", "🍒",
+    "🍓", "🍑", "🍒", "🍎", "🍋", "🍉", "🍇", "🥑", "🍊",
+    # animals (soft / aesthetic)
+    "🐈", "🐇", "🕊️", "🦢", "🐥", "🐾", "🐈‍⬛", "🦌",
+    # creative / soft items
+    "🎨", "🎵", "🎶", "💌", "📖", "🕯️", "🏷️", "🧶"
 )
 
 # Per-account recency window — refuse to reuse the last N emojis for the same
@@ -84,7 +88,7 @@ def _pick_emoji(account_id: int | None) -> str:
 
 # 26**4 ≈ 457k combinations — collision probability is negligible at any
 # realistic post rate, so no recency window is needed.
-_LETTER_MIN = 6
+_LETTER_MIN = 3
 _LETTER_MAX = 7
 
 
@@ -123,7 +127,9 @@ def apply_decoration(
     if with_emoji:
         parts.append(_pick_emoji(account_id))
         
+    result_text = "\n\n".join(parts)
+    
     if trailing_hashtags:
-        parts.append(trailing_hashtags)
+        result_text += f"\n\n{trailing_hashtags}"
 
-    return " ".join(parts)
+    return result_text

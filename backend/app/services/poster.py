@@ -28,6 +28,9 @@ log = logging.getLogger(__name__)
 # Keyboard input goes through a different pipeline — no overlay check.
 _POST_HOTKEY = "Meta+Enter" if platform.system() == "Darwin" else "Control+Enter"
 
+_CHAIN_TWEET_IDS: dict[int, str] = {}
+_CHAIN_COUNTS: dict[int, int] = {}
+
 
 async def close_session(account_id: int) -> None:  # noqa: ARG001
     """No-op stub kept for scheduler import compatibility."""
@@ -196,6 +199,7 @@ async def post_reply(
         return result
 
     result = await _do_reply(
+        account_id,
         state,
         content,
         target_tweet_id,
@@ -549,6 +553,7 @@ async def _attach_media(page, paths: list[Path]) -> str | None:  # type: ignore[
 
 
 async def _do_reply(
+    account_id: int,
     storage_state: dict[str, Any],
     content: str,
     target_tweet_id: str,
@@ -592,10 +597,29 @@ async def _do_reply(
                 await context.add_init_script(_STEALTH_SCRIPT)
                 page = await context.new_page()
 
+                # Deferred Chain Navigation logic
+                current_target_id = target_tweet_id
+                if account_id in _CHAIN_TWEET_IDS:
+                    chain_id = _CHAIN_TWEET_IDS[account_id]
+                    chain_count = _CHAIN_COUNTS.get(account_id, 0)
+                    if chain_count >= 10:
+                        log.info(
+                            f"Chain length reached 10 for account {account_id}, "
+                            "resetting to original target"
+                        )
+                        _CHAIN_TWEET_IDS.pop(account_id, None)
+                        _CHAIN_COUNTS.pop(account_id, None)
+                    else:
+                        current_target_id = chain_id
+                        log.info(
+                            f"Continuing chain for account {account_id}, "
+                            f"target: {current_target_id} (Length: {chain_count})"
+                        )
+
                 # Canonical reply URL. X redirects this to the
                 # handle-prefixed form once the page settles — that's fine.
                 await page.goto(
-                    f"https://x.com/i/web/status/{target_tweet_id}",
+                    f"https://x.com/i/web/status/{current_target_id}",
                     wait_until="domcontentloaded",
                 )
 
@@ -604,6 +628,10 @@ async def _do_reply(
                 # don't wait 20s for an editor that will never appear.
                 gone = await _is_target_gone(page)
                 if gone:
+                    if account_id in _CHAIN_TWEET_IDS:
+                        log.warning(f"Chain target {current_target_id} is gone, resetting chain.")
+                        _CHAIN_TWEET_IDS.pop(account_id, None)
+                        _CHAIN_COUNTS.pop(account_id, None)
                     return PostResult(
                         ok=False,
                         error=(
@@ -665,6 +693,32 @@ async def _do_reply(
                 await button.wait_for(timeout=button_timeout)
 
                 url_before_reply = page.url
+                
+                # Intercept CreateTweet GraphQL response to get the new tweet ID
+                async def handle_response(response: Any) -> None:
+                    if "CreateTweet" in response.url and response.request.method == "POST":
+                        try:
+                            json_data = await response.json()
+                            results = (
+                                json_data.get("data", {})
+                                .get("create_tweet", {})
+                                .get("tweet_results", {})
+                                .get("result", {})
+                            )
+                            new_tweet_id = results.get("rest_id")
+                            if not new_tweet_id:
+                                tweet = results.get("tweet", {})
+                                if isinstance(tweet, dict) and "rest_id" in tweet:
+                                    new_tweet_id = tweet["rest_id"]
+                            if new_tweet_id:
+                                log.info(f"Intercepted new tweet ID for chain: {new_tweet_id}")
+                                _CHAIN_TWEET_IDS[account_id] = new_tweet_id
+                                _CHAIN_COUNTS[account_id] = _CHAIN_COUNTS.get(account_id, 0) + 1
+                        except Exception as e:
+                            log.warning(f"Error parsing CreateTweet response: {e}")
+
+                page.on("response", handle_response)
+                
                 await page.keyboard.press(_POST_HOTKEY)
 
                 _X_REPLY_PLACEHOLDERS = (
