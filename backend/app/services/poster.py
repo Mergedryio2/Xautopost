@@ -44,64 +44,109 @@ async def close_session(account_id: int) -> None:  # noqa: ARG001
 #   - navigator.languages
 #   - window.chrome (missing in Playwright)
 #   - Notification / permissions query path
-_STEALTH_SCRIPT = """
-(function() {
+#   - Canvas 2D fingerprint (per-session noise)
+#   - WebGL vendor/renderer (randomised per-session from a realistic pool)
+
+# Pool of plausible desktop GPU strings — one is picked per-session at
+# Python level and injected into the JS template so each Chromium instance
+# presents a different hardware fingerprint.
+_WEBGL_RENDERERS: list[tuple[str, str]] = [
+    ("Intel Inc.", "Intel Iris OpenGL Engine"),
+    ("Intel Inc.", "Intel HD Graphics 630 OpenGL Engine"),
+    ("Intel Inc.", "Intel UHD Graphics 620 OpenGL Engine"),
+    ("Google Inc. (Intel)",
+     "ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)"),
+    ("Google Inc. (NVIDIA)",
+     "ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11 vs_5_0 ps_5_0, D3D11)"),
+    ("Google Inc. (AMD)",
+     "ANGLE (AMD, AMD Radeon RX 5500M Direct3D11 vs_5_0 ps_5_0, D3D11)"),
+    ("Apple Inc.", "Apple M1"),
+    ("Apple Inc.", "Apple M2"),
+]
+
+
+def _make_stealth_script() -> str:
+    """Generate a per-session stealth script with a randomised WebGL renderer
+    and unique Canvas noise seed so every Chromium launch presents a distinct
+    hardware fingerprint."""
+    vendor, renderer = random.choice(_WEBGL_RENDERERS)
+    # A small random float baked into the JS as a canvas noise seed.
+    # Keeps each session's Canvas fingerprint unique without noticeable
+    # visual change (shift is sub-pixel).
+    canvas_noise = random.uniform(0.00001, 0.0001)
+    return f"""
+(function() {{
   // 1. webdriver flag
-  Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+  Object.defineProperty(navigator, 'webdriver', {{ get: () => undefined }});
 
   // 2. Fake plugin list (Chrome has ~5 built-in)
   const fakePlugins = ['Chrome PDF Plugin','Chrome PDF Viewer','Native Client',
                        'Shockwave Flash','Microsoft Edge PDF Viewer'];
-  Object.defineProperty(navigator, 'plugins', {
-    get: () => fakePlugins.map(n => ({ name: n, description: n,
-      filename: 'internal', length: 1, item: () => null, namedItem: () => null })),
-  });
+  Object.defineProperty(navigator, 'plugins', {{
+    get: () => fakePlugins.map(n => ({{ name: n, description: n,
+      filename: 'internal', length: 1, item: () => null, namedItem: () => null }})),
+  }});
 
   // 3. Languages
-  Object.defineProperty(navigator, 'languages', {
+  Object.defineProperty(navigator, 'languages', {{
     get: () => ['th-TH', 'th', 'en-US', 'en'],
-  });
+  }});
 
   // 4. chrome runtime (missing in Playwright)
-  if (!window.chrome) { window.chrome = {}; }
-  if (!window.chrome.runtime) { window.chrome.runtime = {}; }
+  if (!window.chrome) {{ window.chrome = {{}}; }}
+  if (!window.chrome.runtime) {{ window.chrome.runtime = {{}}; }}
 
   // 5. Permissions
-  if (navigator.permissions && navigator.permissions.query) {
+  if (navigator.permissions && navigator.permissions.query) {{
     const origQuery = navigator.permissions.query.bind(navigator.permissions);
     navigator.permissions.query = (p) =>
       p.name === 'notifications'
-        ? Promise.resolve({ state: Notification.permission, onchange: null })
+        ? Promise.resolve({{ state: Notification.permission, onchange: null }})
         : origQuery(p);
-  }
+  }}
 
   // 6. Hardware / Memory spoofing
-  Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
-  Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+  Object.defineProperty(navigator, 'hardwareConcurrency', {{ get: () => 8 }});
+  Object.defineProperty(navigator, 'deviceMemory', {{ get: () => 8 }});
 
-  // 7. Basic WebGL spoofing
+  // 7. WebGL spoofing — randomised per-session from a realistic GPU pool
   const getParameter = WebGLRenderingContext.prototype.getParameter;
-  WebGLRenderingContext.prototype.getParameter = function(parameter) {
-    // UNMASKED_VENDOR_WEBGL
-    if (parameter === 37445) { return 'Intel Inc.'; }
-    // UNMASKED_RENDERER_WEBGL
-    if (parameter === 37446) { return 'Intel Iris OpenGL Engine'; }
-    return getParameter(parameter);
-  };
-})();
+  WebGLRenderingContext.prototype.getParameter = function(parameter) {{
+    if (parameter === 37445) {{ return {vendor!r}; }}
+    if (parameter === 37446) {{ return {renderer!r}; }}
+    return getParameter.call(this, parameter);
+  }};
+
+  // 8. Canvas 2D fingerprint noise — sub-pixel offset unique per session
+  const _noise = {canvas_noise};
+  const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+  HTMLCanvasElement.prototype.toDataURL = function(type, quality) {{
+    const ctx = this.getContext('2d');
+    if (ctx) {{
+      const id = ctx.getImageData(0, 0, 1, 1);
+      id.data[0] = (id.data[0] + _noise * 255) & 0xff;
+      ctx.putImageData(id, 0, 0);
+    }}
+    return origToDataURL.apply(this, arguments);
+  }};
+}})();
 """
 
 
 async def _type_with_hashtag_parsing(page: Any, content: str) -> None:
     """Type content at human-plausible speed so X tokenizes #hashtags.
 
-    Uses keyboard.type(char, delay=0) per character with explicit asyncio
-    sleeps to stay under 5 s for 280 chars while looking human:
-      - Normal chars: 10–20 ms
-      - Word boundary (space/newline): 20–80 ms  (slight pause between words)
-    Total for 280 chars: ~3–4.5 s max.
+    Rhythm rules that mimic real typing:
+      - Normal chars: 5–30 ms
+      - After a space / newline (word boundary): 15–50 ms
+      - After punctuation (.,!?;:): 80–200 ms (thinking pause between sentences)
+      - Micro-break every 30–60 chars: 200–500 ms ("reading back what I wrote")
+    Total for 280 chars: ~4–8 s — slower than the old version but much harder
+    to distinguish from organic input by keystroke-timing analysis.
     """
     in_hashtag = False
+    char_count = 0
+    next_micro_break = random.randint(30, 60)
     for char in content:
         if char == '#':
             in_hashtag = True
@@ -112,8 +157,17 @@ async def _type_with_hashtag_parsing(page: Any, content: str) -> None:
             in_hashtag = False
 
         await page.keyboard.type(char, delay=0)
-        if char in (' ', '\n'):
-            await asyncio.sleep(random.uniform(0.010, 0.030))
+        char_count += 1
+
+        # Micro-break — simulates glancing back at what was typed
+        if char_count >= next_micro_break:
+            await asyncio.sleep(random.uniform(0.20, 0.50))
+            char_count = 0
+            next_micro_break = random.randint(30, 60)
+        elif char in (',', '.', '!', '?', ';', ':'):
+            await asyncio.sleep(random.uniform(0.08, 0.20))
+        elif char in (' ', '\n'):
+            await asyncio.sleep(random.uniform(0.015, 0.050))
         else:
             await asyncio.sleep(random.uniform(0.005, 0.030))
 
@@ -124,14 +178,29 @@ async def _type_with_hashtag_parsing(page: Any, content: str) -> None:
 
 
 async def _human_mouse_move(page: Any, x: float, y: float) -> None:
-    """Move mouse to (x, y) via a two-step curved path to avoid teleporting."""
+    """Move mouse to (x, y) via a multi-point curved path that varies speed.
+
+    Simulates a Bezier-like arc: start → 2-3 intermediate waypoints → target.
+    Speed varies inversely with remaining distance (fast start, slow approach)
+    to defeat trajectory-based bot detection.
+    """
     try:
-        mid_x = x + random.uniform(-40, 40)
-        mid_y = y + random.uniform(-40, 40)
-        await page.mouse.move(mid_x, mid_y)
-        await asyncio.sleep(random.uniform(0.05, 0.12))
-        await page.mouse.move(x, y)
-        await asyncio.sleep(random.uniform(0.03, 0.08))
+        # Generate 2–4 intermediate waypoints with organic scatter
+        n_waypoints = random.randint(2, 4)
+        waypoints = []
+        for i in range(1, n_waypoints + 1):
+            t = i / (n_waypoints + 1)
+            scatter_x = random.uniform(-50, 50) * (1 - abs(t - 0.5) * 2)
+            scatter_y = random.uniform(-30, 30) * (1 - abs(t - 0.5) * 2)
+            waypoints.append((x * t + scatter_x, y * t + scatter_y))
+        waypoints.append((x, y))
+
+        for wx, wy in waypoints:
+            await page.mouse.move(wx, wy)
+            # Decelerate near the end of the path
+            remaining = len(waypoints) - waypoints.index((wx, wy)) - 1
+            pause = random.uniform(0.02, 0.06) if remaining > 0 else random.uniform(0.05, 0.12)
+            await asyncio.sleep(pause)
     except Exception:  # noqa: BLE001
         pass
 
@@ -319,7 +388,7 @@ async def _do_post(
                     viewport=None,
                     no_viewport=True,
                 )
-                await context.add_init_script(_STEALTH_SCRIPT)
+                await context.add_init_script(_make_stealth_script())
                 page = await context.new_page()
 
                 # Verify session is alive — wait for the SideNav New Post button
@@ -594,7 +663,7 @@ async def _do_reply(
                     viewport=None,
                     no_viewport=True,
                 )
-                await context.add_init_script(_STEALTH_SCRIPT)
+                await context.add_init_script(_make_stealth_script())
                 page = await context.new_page()
 
                 # Deferred Chain Navigation logic
@@ -815,6 +884,9 @@ async def _is_target_gone(page) -> bool:  # type: ignore[no-untyped-def]
             "post unavailable",
             "this post was deleted",
             "this post is unavailable",
+            "โพสต์นี้ไม่สามารถใช้งานได้",
+            "โพสต์นี้มาจากบัญชีที่ไม่มีอยู่",
+            "ไม่มีหน้าเว็บนี้",
         ):
             if phrase in lowered:
                 return True

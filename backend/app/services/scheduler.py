@@ -19,8 +19,7 @@ from app.db.utils import now_local, utcnow
 from app.services.ai import generate_content
 from app.services.manual import apply_decoration, split_manual
 from app.services.media import extract_media_tokens, resolve_media_ids
-from app.services.poster import post_reply, post_tweet, close_session
-import asyncio
+from app.services.poster import close_session, post_reply, post_tweet
 from app.services.tweet_scanner import scan_manager
 
 log = logging.getLogger(__name__)
@@ -522,6 +521,10 @@ class RotationScheduler:
         failures."""
         target_tweet_id: str | None = None
         try:
+            # Fix 5: Jitter — stagger parallel browser launches by 0–3s so
+            # concurrent accounts don't create a synchronised token-request
+            # burst across multiple IPs, which X's backend flags as automated.
+            await asyncio.sleep(random.uniform(0.0, 3.0))
             with SessionLocal() as db:
                 prompt = db.get(Prompt, prompt_id)
                 if prompt is None:
