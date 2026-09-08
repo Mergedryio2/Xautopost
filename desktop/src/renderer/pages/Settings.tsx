@@ -10,6 +10,7 @@ import {
   type ApiKeyOut,
   type Operator,
   type PostLogOut,
+  type TypingMode,
   type XAccountOut,
 } from '../lib/api'
 
@@ -324,13 +325,15 @@ function ProfileSection({
 }) {
   const [interval, setIntervalSec] = useState(operator.rotation_interval_seconds)
   const [parallelPosts, setParallelPosts] = useState(operator.parallel_posts)
+  const [typingMode, setTypingMode] = useState<TypingMode>(operator.typing_mode)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const dirty =
     interval !== operator.rotation_interval_seconds ||
-    parallelPosts !== operator.parallel_posts
+    parallelPosts !== operator.parallel_posts ||
+    typingMode !== operator.typing_mode
 
   async function onSave() {
     setSaving(true)
@@ -339,6 +342,7 @@ function ProfileSection({
       const updated = await api.updateOperator(operator.id, {
         rotation_interval_seconds: interval,
         parallel_posts: parallelPosts,
+        typing_mode: typingMode,
       })
       onOperatorChange(updated)
     } catch (e) {
@@ -426,6 +430,55 @@ function ProfileSection({
                 onChange={(e) => setParallelPosts(Number(e.target.value))}
                 style={{ maxWidth: 180 }}
               />
+            </div>
+          </div>
+
+          <div
+            style={{
+              borderTop: '1px solid var(--border)',
+              paddingTop: 12,
+              marginTop: 4,
+            }}
+          >
+            <div className="field">
+              <span className="field-label-plain">วิธีพิมพ์ข้อความ</span>
+              <p className="muted-note is-inline" style={{ marginBottom: 6 }}>
+                วิธีที่ระบบใส่ข้อความลงช่องทวีตของ X ทั้งโพสต์อัตโนมัติและ
+                &ldquo;ทดลองโพสต์&rdquo; จะใช้ค่านี้ร่วมกัน
+              </p>
+              <div
+                className="style-template-grid"
+                style={{ gridTemplateColumns: '1fr 1fr' }}
+              >
+                <button
+                  type="button"
+                  className={`style-template ${typingMode === 'simulate' ? 'is-active' : ''}`}
+                  onClick={() => setTypingMode('simulate')}
+                >
+                  <span className="style-template-emoji">⌨️</span>
+                  <span className="style-template-name">พิมพ์ทีละตัว</span>
+                  <span className="style-template-sub">
+                    ค่าเดิม · เนียนแต่ช้ากว่า
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={`style-template ${typingMode === 'paste' ? 'is-active' : ''}`}
+                  onClick={() => setTypingMode('paste')}
+                >
+                  <span className="style-template-emoji">📋</span>
+                  <span className="style-template-name">วางทันที</span>
+                  <span className="style-template-sub">
+                    เร็วมาก · Paste ครั้งเดียว
+                  </span>
+                </button>
+              </div>
+              {typingMode === 'paste' && (
+                <p className="muted-note is-inline" style={{ marginTop: 6 }}>
+                  ⚠️ โหมดนี้ยังไม่ยืนยันว่า #แฮชแท็ก จะค้นหาเจอในฟีดแฮชแท็กเหมือนโหมดพิมพ์ทีละตัว
+                  แนะนำให้ลองโพสต์ทดสอบดูก่อนใช้งานจริงกับข้อความที่มีแฮชแท็ก
+                </p>
+              )}
             </div>
           </div>
 

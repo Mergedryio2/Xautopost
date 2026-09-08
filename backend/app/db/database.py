@@ -131,6 +131,7 @@ def _migrate_operators() -> None:
     new_columns: list[tuple[str, str]] = [
         ("rotation_interval_seconds", "INTEGER NOT NULL DEFAULT 5"),
         ("parallel_posts", "INTEGER NOT NULL DEFAULT 1"),
+        ("typing_mode", "TEXT NOT NULL DEFAULT 'simulate'"),
     ]
     with engine.begin() as conn:
         cols = conn.execute(text("PRAGMA table_info(operators)")).fetchall()

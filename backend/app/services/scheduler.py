@@ -531,6 +531,9 @@ class RotationScheduler:
                     _log_skip(account_id, "สไตล์ถูกลบไปแล้ว")
                     return
 
+                op = db.get(Operator, operator_id)
+                typing_mode = op.typing_mode if op is not None else "simulate"
+
                 mode = prompt.mode
                 body = prompt.body
                 fallback = prompt.fallback_text
@@ -682,6 +685,7 @@ class RotationScheduler:
                     window_position=(x, y),
                     window_size=(w, h),
                     headless=False,
+                    typing_mode=typing_mode,
                 )
             else:
                 await post_tweet(
@@ -691,6 +695,7 @@ class RotationScheduler:
                     window_position=(x, y),
                     window_size=(w, h),
                     headless=False,
+                    typing_mode=typing_mode,
                 )
         except Exception:  # noqa: BLE001
             log.exception(

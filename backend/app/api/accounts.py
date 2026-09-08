@@ -274,5 +274,6 @@ async def test_post_account(
         account_id=account_id,
         content=payload.content,
         media_paths=media_paths,
+        typing_mode=op.typing_mode,
     )
     return TestPostOut(ok=result.ok, error=result.error)

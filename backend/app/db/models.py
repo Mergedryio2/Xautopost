@@ -23,6 +23,12 @@ class Operator(Base):
     # the API layer (1-4) — beyond that hits diminishing returns vs. memory
     # and X anti-spam pattern detection.
     parallel_posts: Mapped[int] = mapped_column(default=1)
+    # How Playwright enters tweet text into X's composer:
+    #   'simulate' — type character-by-character at human-plausible speed
+    #                (needed for X to tokenize #hashtags as searchable links)
+    #   'paste'    — insert the whole text in one synthetic paste event,
+    #                near-instant but hashtag search-indexing is unverified
+    typing_mode: Mapped[str] = mapped_column(String(16), default="simulate")
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(default=None)
 

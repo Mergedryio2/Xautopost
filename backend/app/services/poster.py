@@ -177,6 +177,43 @@ async def _type_with_hashtag_parsing(page: Any, content: str) -> None:
         await page.keyboard.press("Escape")
 
 
+async def _paste_content(page: Any, content: str) -> None:
+    """Insert content in one shot via a synthetic clipboard paste event,
+    instead of driving the keyboard character-by-character. Near-instant
+    compared to `_type_with_hashtag_parsing`.
+
+    Deliberately does NOT go through the OS clipboard (`navigator.clipboard`
+    + Ctrl/Cmd+V): the scheduler can run several Chromium windows in
+    parallel on one machine (see `parallel_posts`), and the OS clipboard is
+    one global resource shared by all of them — two tasks writing to it
+    around the same time would race, and account A could end up posting
+    account B's text. Building the ClipboardEvent in-page and dispatching it
+    straight on the focused editor keeps every session's paste isolated,
+    with no shared state between concurrent browsers.
+
+    Note: unlike the typing path, this fires a single paste event for the
+    whole string, so it relies entirely on X's own paste handler to
+    tokenize `#hashtags` into searchable links — that behavior hasn't been
+    verified against the hashtag-feed issue the typing path was built to
+    fix, so compare the two modes in practice before relying on paste for
+    hashtag-heavy content."""
+    await page.evaluate(
+        """(text) => {
+            const el = document.activeElement;
+            if (!el) return;
+            const dt = new DataTransfer();
+            dt.setData('text/plain', text);
+            const event = new ClipboardEvent('paste', {
+                clipboardData: dt,
+                bubbles: true,
+                cancelable: true,
+            });
+            el.dispatchEvent(event);
+        }""",
+        content,
+    )
+
+
 async def _human_mouse_move(page: Any, x: float, y: float) -> None:
     """Move mouse to (x, y) via a multi-point curved path that varies speed.
 
@@ -219,13 +256,17 @@ async def post_tweet(
     window_position: tuple[int, int] | None = None,
     window_size: tuple[int, int] | None = None,
     headless: bool = False,
+    typing_mode: str = "simulate",
 ) -> PostResult:
     """Restore the X account session and post a tweet. Logs to post_logs.
     `media_paths` is an ordered list of files to attach (max 4 images, OR 1
     video — X rejects mixed combinations and posts beyond those caps).
     `window_position` and `window_size` pin the Chromium window to a fixed
     spot — used by the parallel scheduler to tile concurrent posts in a
-    deterministic grid instead of letting them stack at the OS default."""
+    deterministic grid instead of letting them stack at the OS default.
+    `typing_mode` is 'simulate' (character-by-character, the original
+    behavior) or 'paste' (single instant paste event) — see
+    `_type_with_hashtag_parsing` / `_paste_content`."""
     state, proxy_kwargs, _handle = _load_account_state(account_id)
     if state is None:
         result = PostResult(ok=False, error="ยังไม่มี session ที่บันทึกไว้")
@@ -240,6 +281,7 @@ async def post_tweet(
         window_position=window_position,
         window_size=window_size,
         headless=headless,
+        typing_mode=typing_mode,
     )
     _write_log(account_id, content, result)
     return result
@@ -254,11 +296,13 @@ async def post_reply(
     window_position: tuple[int, int] | None = None,
     window_size: tuple[int, int] | None = None,
     headless: bool = False,
+    typing_mode: str = "simulate",
 ) -> PostResult:
     """Reply to a specific tweet. Navigates to
     https://x.com/i/web/status/{id}, opens the inline reply composer, types,
     and submits via the Cmd/Ctrl+Enter hotkey. The result is logged with
-    reply_to_tweet_id so the scheduler can enforce per-target reply caps."""
+    reply_to_tweet_id so the scheduler can enforce per-target reply caps.
+    `typing_mode` — see `post_tweet`."""
     state, proxy_kwargs, _handle = _load_account_state(account_id)
     if state is None:
         result = PostResult(ok=False, error="ยังไม่มี session ที่บันทึกไว้")
@@ -277,6 +321,7 @@ async def post_reply(
         window_position=window_position,
         window_size=window_size,
         headless=headless,
+        typing_mode=typing_mode,
     )
     _write_log(
         account_id, content, result, reply_to_tweet_id=target_tweet_id
@@ -346,6 +391,7 @@ async def _do_post(
     window_position: tuple[int, int] | None = None,
     window_size: tuple[int, int] | None = None,
     headless: bool = False,
+    typing_mode: str = "simulate",
 ) -> PostResult:
     try:
         async with async_playwright() as pw:
@@ -459,7 +505,10 @@ async def _do_post(
                 # picks up — bypassing both traps.
                 await editor.focus()
                 await asyncio.sleep(random.uniform(0.5, 0.9))
-                await _type_with_hashtag_parsing(page, content)
+                if typing_mode == "paste":
+                    await _paste_content(page, content)
+                else:
+                    await _type_with_hashtag_parsing(page, content)
                 await asyncio.sleep(random.uniform(0.5, 1.0))  # let React debounce + state propagate
 
                 # Attach media via X's hidden composer file input. Done after
@@ -631,6 +680,7 @@ async def _do_reply(
     window_position: tuple[int, int] | None = None,
     window_size: tuple[int, int] | None = None,
     headless: bool = False,
+    typing_mode: str = "simulate",
 ) -> PostResult:
     """Reply flow (v0.2.8 style). Navigates directly to the target tweet status
     page, opens the inline reply composer, types, and submits. Fresh browser
@@ -746,7 +796,10 @@ async def _do_reply(
 
                 await editor.click()
                 await asyncio.sleep(random.uniform(0.6, 1.4))  # pause before typing
-                await _type_with_hashtag_parsing(page, content)
+                if typing_mode == "paste":
+                    await _paste_content(page, content)
+                else:
+                    await _type_with_hashtag_parsing(page, content)
                 await asyncio.sleep(random.uniform(0.6, 1.5))  # review before send
 
                 if media_paths:

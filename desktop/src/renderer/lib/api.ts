@@ -1,3 +1,5 @@
+export type TypingMode = 'simulate' | 'paste'
+
 export type Operator = {
   id: number
   name: string
@@ -5,6 +7,9 @@ export type Operator = {
   rotation_interval_seconds: number
   // 1 = sequential (legacy behavior). Up to 6 parallel posts per operator.
   parallel_posts: number
+  // 'simulate' = type char-by-char (current, human-like). 'paste' = insert
+  // the whole text instantly via a paste event.
+  typing_mode: TypingMode
   created_at: string
   last_login_at: string | null
 }
@@ -281,6 +286,7 @@ export const api = {
       rotation_interval_seconds: number
       parallel_posts: number
       avatar_color: string
+      typing_mode: TypingMode
     }>,
   ) =>
     request<Operator>(`/operators/${id}`, {

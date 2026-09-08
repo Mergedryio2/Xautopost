@@ -26,6 +26,7 @@ class OperatorOut(BaseModel):
     avatar_color: str
     rotation_interval_seconds: int
     parallel_posts: int
+    typing_mode: str
     created_at: datetime
     last_login_at: datetime | None
 
@@ -47,6 +48,7 @@ class OperatorUpdate(BaseModel):
     # User can now specify any number.
     parallel_posts: int | None = Field(default=None, ge=1, le=999)
     avatar_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    typing_mode: str | None = Field(default=None, pattern=r"^(simulate|paste)$")
 
 
 @router.get("", response_model=list[OperatorOut])
