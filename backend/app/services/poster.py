@@ -297,12 +297,15 @@ async def post_reply(
     window_size: tuple[int, int] | None = None,
     headless: bool = False,
     typing_mode: str = "simulate",
+    chain_replies: bool = True,
 ) -> PostResult:
     """Reply to a specific tweet. Navigates to
     https://x.com/i/web/status/{id}, opens the inline reply composer, types,
     and submits via the Cmd/Ctrl+Enter hotkey. The result is logged with
     reply_to_tweet_id so the scheduler can enforce per-target reply caps.
-    `typing_mode` — see `post_tweet`."""
+    `typing_mode` — see `post_tweet`. `chain_replies=False` forces every
+    reply straight under `target_tweet_id` instead of threading under the
+    account's previous reply (see _CHAIN_TWEET_IDS)."""
     state, proxy_kwargs, _handle = _load_account_state(account_id)
     if state is None:
         result = PostResult(ok=False, error="ยังไม่มี session ที่บันทึกไว้")
@@ -322,6 +325,7 @@ async def post_reply(
         window_size=window_size,
         headless=headless,
         typing_mode=typing_mode,
+        chain_replies=chain_replies,
     )
     _write_log(
         account_id, content, result, reply_to_tweet_id=target_tweet_id
@@ -681,6 +685,7 @@ async def _do_reply(
     window_size: tuple[int, int] | None = None,
     headless: bool = False,
     typing_mode: str = "simulate",
+    chain_replies: bool = True,
 ) -> PostResult:
     """Reply flow (v0.2.8 style). Navigates directly to the target tweet status
     page, opens the inline reply composer, types, and submits. Fresh browser
@@ -718,7 +723,14 @@ async def _do_reply(
 
                 # Deferred Chain Navigation logic
                 current_target_id = target_tweet_id
-                if account_id in _CHAIN_TWEET_IDS:
+                if not chain_replies:
+                    # Single-target mode: always land on the head post.
+                    # Also drop any chain left over from a previous
+                    # rotating-mode prompt so it can't resurface if the
+                    # user later switches this account back.
+                    _CHAIN_TWEET_IDS.pop(account_id, None)
+                    _CHAIN_COUNTS.pop(account_id, None)
+                elif account_id in _CHAIN_TWEET_IDS:
                     chain_id = _CHAIN_TWEET_IDS[account_id]
                     chain_count = _CHAIN_COUNTS.get(account_id, 0)
                     if chain_count >= 10:
@@ -832,7 +844,7 @@ async def _do_reply(
                                 tweet = results.get("tweet", {})
                                 if isinstance(tweet, dict) and "rest_id" in tweet:
                                     new_tweet_id = tweet["rest_id"]
-                            if new_tweet_id:
+                            if new_tweet_id and chain_replies:
                                 log.info(f"Intercepted new tweet ID for chain: {new_tweet_id}")
                                 _CHAIN_TWEET_IDS[account_id] = new_tweet_id
                                 _CHAIN_COUNTS[account_id] = _CHAIN_COUNTS.get(account_id, 0) + 1

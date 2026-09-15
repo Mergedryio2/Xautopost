@@ -755,7 +755,7 @@ function PromptForm({
               <div>
                 <div className="target-mode-title">เลือกโพสต์เดียว</div>
                 <div className="target-mode-sub">
-                  รีพลายโพสต์ที่กำหนดซ้ำๆ
+                  reply ใต้หัวโพสต์นั้นโดยตรงทุกครั้ง
                 </div>
               </div>
             </label>
@@ -799,8 +799,9 @@ function PromptForm({
             </label>
           </div>
           <span className="muted-note" style={{ marginTop: 6, display: 'block' }}>
-            ทุก mode: ระบบจะหมุนเวียน reply ตัวที่ <strong>โดน reply น้อยที่สุด</strong>{' '}
-            ก่อน (กระจายให้สมดุล)
+            {replyTargetMode === 'single'
+              ? 'reply ทุกครั้งจะไปอยู่ใต้หัวโพสต์ที่เลือกโดยตรง ไม่ต่อสายใต้ reply เดิม'
+              : 'ระบบจะหมุนเวียน reply ตัวที่โดน reply น้อยที่สุดก่อน (กระจายให้สมดุล) และต่อสายใต้ reply เดิมได้สูงสุด 10 ชั้นก่อนกลับมาที่หัวโพสต์'}
           </span>
         </div>
 

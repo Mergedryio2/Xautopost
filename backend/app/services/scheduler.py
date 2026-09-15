@@ -534,6 +534,12 @@ class RotationScheduler:
                 op = db.get(Operator, operator_id)
                 typing_mode = op.typing_mode if op is not None else "simulate"
 
+                # 'single' target mode means the user picked one head post
+                # and wants every reply directly under it. The reply
+                # chain (reply-under-our-previous-reply) only makes sense
+                # for the rotating modes, so switch it off here.
+                chain_replies = (prompt.reply_target_mode or "single") != "single"
+
                 mode = prompt.mode
                 body = prompt.body
                 fallback = prompt.fallback_text
@@ -686,6 +692,7 @@ class RotationScheduler:
                     window_size=(w, h),
                     headless=False,
                     typing_mode=typing_mode,
+                    chain_replies=chain_replies,
                 )
             else:
                 await post_tweet(
