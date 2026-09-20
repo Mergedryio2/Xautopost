@@ -19,7 +19,12 @@ from app.db.utils import now_local, utcnow
 from app.services.ai import generate_content
 from app.services.manual import apply_decoration, split_manual
 from app.services.media import extract_media_tokens, resolve_media_ids
-from app.services.poster import close_session, post_reply, post_tweet
+from app.services.poster import (
+    close_session,
+    has_reply_session,
+    post_reply,
+    post_tweet,
+)
 from app.services.tweet_scanner import scan_manager
 
 log = logging.getLogger(__name__)
@@ -54,6 +59,11 @@ _busy_slots_by_operator: dict[int, set[int]] = {}
 
 # (account_id, prompt_id) -> next manual candidate index
 _manual_index_tracker: dict[tuple[int, int], int] = {}
+
+# Event loop the scheduler runs on, captured in start(). API routes are
+# sync (threadpool) so they have no running loop of their own; closing a
+# reply browser from there has to be handed over to this loop.
+_loop: asyncio.AbstractEventLoop | None = None
 
 def _detect_screen_size() -> tuple[int, int]:
     """Best-effort detection of the main display's usable size. macOS:
@@ -178,8 +188,10 @@ class RotationScheduler:
         self._started = False
 
     def start(self) -> None:
+        global _loop
         if self._started:
             return
+        _loop = asyncio.get_running_loop()
         self._scheduler.start()
         self._started = True
         with SessionLocal() as db:
@@ -215,24 +227,28 @@ class RotationScheduler:
         except JobLookupError:
             pass
 
-        # Close persistent browser sessions for this operator's accounts
-        try:
-            loop = asyncio.get_running_loop()
-            with SessionLocal() as db:
-                accounts = db.query(XAccount.id).filter(XAccount.operator_id == operator_id).all()
-                for (acc_id,) in accounts:
-                    loop.create_task(close_session(acc_id))
-        except RuntimeError:
-            pass # No running event loop
-
         self._schedule_operator(operator_id)
 
     def refresh_account(self, account_id: int) -> None:
-        """Account-level changes (toggle, prompt, etc.) -> reschedule its operator."""
+        """Account-level changes (toggle, prompt, etc.) -> reschedule its
+        operator. Also closes the account's persistent reply browser when
+        the change means the reply slot will no longer run — the account
+        was disabled, deleted, switched to post-only, or lost its reply
+        prompt. Other edits (interval, daily limit, …) keep the browser
+        open; a proxy change is picked up by the poster itself, which
+        relaunches on the next reply when the launch signature differs."""
         with SessionLocal() as db:
             acc = db.get(XAccount, account_id)
             if acc is not None:
                 self.refresh_operator(acc.operator_id)
+            reply_stopped = (
+                acc is None
+                or not acc.posting_enabled
+                or getattr(acc, "run_mode", "both") == "post_only"
+                or acc.reply_prompt_id is None
+            )
+        if reply_stopped:
+            _close_reply_session_soon(account_id)
 
     @staticmethod
     def _job_id(operator_id: int) -> str:
@@ -402,6 +418,9 @@ class RotationScheduler:
                         or 0
                     )
                     if count >= acc.daily_limit:
+                        # Post cap for the day — the reply browser has
+                        # nothing left to do until tomorrow.
+                        _close_reply_session_soon(acc.id)
                         continue
 
                 # --- Per-slot eligibility ---
@@ -524,7 +543,11 @@ class RotationScheduler:
             # Fix 5: Jitter — stagger parallel browser launches by 0–3s so
             # concurrent accounts don't create a synchronised token-request
             # burst across multiple IPs, which X's backend flags as automated.
-            await asyncio.sleep(random.uniform(0.0, 3.0))
+            # A reply slot whose persistent browser is already up launches
+            # nothing, so it skips the jitter — otherwise a 1s interval
+            # would be padded by up to 3s every time.
+            if not (slot_kind == "reply" and has_reply_session(account_id)):
+                await asyncio.sleep(random.uniform(0.0, 3.0))
             with SessionLocal() as db:
                 prompt = db.get(Prompt, prompt_id)
                 if prompt is None:
@@ -533,12 +556,10 @@ class RotationScheduler:
 
                 op = db.get(Operator, operator_id)
                 typing_mode = op.typing_mode if op is not None else "simulate"
-
-                # 'single' target mode means the user picked one head post
-                # and wants every reply directly under it. The reply
-                # chain (reply-under-our-previous-reply) only makes sense
-                # for the rotating modes, so switch it off here.
-                chain_replies = (prompt.reply_target_mode or "single") != "single"
+                acc = db.get(XAccount, account_id)
+                pace_seconds = float(
+                    acc.min_interval_seconds if acc is not None else 10
+                )
 
                 mode = prompt.mode
                 body = prompt.body
@@ -577,6 +598,10 @@ class RotationScheduler:
                         _log_skip(
                             account_id, skip_reason or "ไม่มีโพสต์ที่ reply ได้"
                         )
+                        # Per-target reply cap hit (or no target at all):
+                        # the reply slot is effectively stopped, so drop
+                        # the persistent browser rather than leave it idle.
+                        _close_reply_session_soon(account_id)
                         return
                     target_tweet_id = picked
 
@@ -692,7 +717,7 @@ class RotationScheduler:
                     window_size=(w, h),
                     headless=False,
                     typing_mode=typing_mode,
-                    chain_replies=chain_replies,
+                    pace_seconds=pace_seconds,
                 )
             else:
                 await post_tweet(
@@ -872,6 +897,25 @@ def _coerce_naive(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
     return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
+
+
+def _close_reply_session_soon(account_id: int) -> None:
+    """Fire-and-forget close of an account's persistent reply browser.
+    No-op when none is open, so callers can invoke it on every tick.
+    Works from both the scheduler loop and sync API-route threads."""
+    if not has_reply_session(account_id):
+        return
+    loop = _loop
+    if loop is None or loop.is_closed():
+        return
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is loop:
+        loop.create_task(close_session(account_id))
+    else:
+        asyncio.run_coroutine_threadsafe(close_session(account_id), loop)
 
 
 def _log_skip(account_id: int, reason: str) -> None:

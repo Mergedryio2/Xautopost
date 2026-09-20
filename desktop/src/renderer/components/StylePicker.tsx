@@ -801,7 +801,7 @@ function PromptForm({
           <span className="muted-note" style={{ marginTop: 6, display: 'block' }}>
             {replyTargetMode === 'single'
               ? 'reply ทุกครั้งจะไปอยู่ใต้หัวโพสต์ที่เลือกโดยตรง ไม่ต่อสายใต้ reply เดิม'
-              : 'ระบบจะหมุนเวียน reply ตัวที่โดน reply น้อยที่สุดก่อน (กระจายให้สมดุล) และต่อสายใต้ reply เดิมได้สูงสุด 10 ชั้นก่อนกลับมาที่หัวโพสต์'}
+              : 'ระบบจะหมุนเวียน reply ตัวที่โดน reply น้อยที่สุดก่อน (กระจายให้สมดุล) ทุก reply ไปอยู่ใต้หัวโพสต์โดยตรง ไม่ต่อสายใต้ reply เดิม'}
           </span>
         </div>
 

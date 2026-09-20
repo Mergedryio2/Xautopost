@@ -11,6 +11,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.api import accounts, api_keys, logs, media, operators, prompts, proxies, tweets
 from app.db.database import init_db
+from app.services.poster import close_all_sessions
 from app.services.scheduler import scheduler
 
 VERSION = "0.2.2"
@@ -28,6 +29,7 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         scheduler.shutdown()
+        await close_all_sessions()
 
 
 app = FastAPI(title="Xautopost Sidecar", version=VERSION, lifespan=lifespan)
