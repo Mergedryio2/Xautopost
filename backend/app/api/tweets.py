@@ -1,20 +1,27 @@
 """Tweet index API: trigger a fresh scrape of an account's profile,
-report scan progress, and list the cached results for the reply-target
-picker in the prompt editor."""
+report scan progress, list the cached results for the reply-target picker
+in the prompt editor, and add/remove individual posts by link (own or
+someone else's)."""
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Annotated
+from datetime import UTC, datetime
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_operator
 from app.db.database import get_db
 from app.db.models import Operator, TweetIndex, XAccount
+from app.db.utils import utcnow
+from app.services.tweet_ref import (
+    fetch_tweet_meta,
+    parse_tweet_ref,
+    snowflake_time,
+)
 from app.services.tweet_scanner import scan_manager
 
 router = APIRouter(prefix="/accounts/{account_id}/tweets", tags=["tweets"])
@@ -33,7 +40,29 @@ class TweetOut(BaseModel):
     is_pinned: bool
     posted_at: datetime | None
     scraped_at: datetime
+    added_at: datetime | None = None
     deleted_at: datetime | None
+    source: str = "scan"
+    is_own: bool = True
+
+    # posted_at comes from X's ISO timestamps (UTC) but SQLite drops the
+    # offset on the way in, so it reads back naive. Every other datetime
+    # here is naive Bangkok-local and the UI assumes +07:00 for anything
+    # without an offset — so put the UTC offset back on this one field.
+    @field_serializer("posted_at")
+    def _posted_at_utc(self, v: datetime | None) -> str | None:
+        if v is None:
+            return None
+        if v.tzinfo is None:
+            v = v.replace(tzinfo=UTC)
+        return v.isoformat()
+
+
+class AddByLinkIn(BaseModel):
+    link: str = Field(min_length=1, max_length=512)
+    # None = decide from the post's author (oEmbed) or the handle in the
+    # link; the UI sends an explicit value from its dropdown.
+    is_own: bool | None = None
 
 
 class ScanStatusOut(BaseModel):
@@ -120,6 +149,11 @@ def list_tweets(
     db: Annotated[Session, Depends(get_db)],
     q: Annotated[str | None, Query(description="text search")] = None,
     has_media: Annotated[bool | None, Query()] = None,
+    is_own: Annotated[bool | None, Query()] = None,
+    source: Annotated[Literal["scan", "manual"] | None, Query()] = None,
+    # 'posted' = newest post first (pinned on top); 'added' = most recently
+    # added to the index first — what "links I just pasted" means.
+    sort: Annotated[Literal["posted", "added"], Query()] = "posted",
     include_deleted: Annotated[bool, Query()] = False,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -135,6 +169,12 @@ def list_tweets(
         stmt = stmt.where(TweetIndex.has_media.is_(True))
     elif has_media is False:
         stmt = stmt.where(TweetIndex.has_media.is_(False))
+    if is_own is True:
+        stmt = stmt.where(TweetIndex.is_own.is_(True))
+    elif is_own is False:
+        stmt = stmt.where(TweetIndex.is_own.is_(False))
+    if source is not None:
+        stmt = stmt.where(TweetIndex.source == source)
     if q:
         # Always-true clause for tweets whose preview wasn't captured so
         # they're not silently dropped from the search results.
@@ -145,16 +185,114 @@ def list_tweets(
                 TweetIndex.tweet_id == q,
             )
         )
-    stmt = (
-        stmt.order_by(
+    if sort == "added":
+        stmt = stmt.order_by(
+            TweetIndex.added_at.desc().nulls_last(),
+            TweetIndex.id.desc(),
+        )
+    else:
+        stmt = stmt.order_by(
             TweetIndex.is_pinned.desc(),
             TweetIndex.posted_at.desc().nulls_last(),
             TweetIndex.id.desc(),
         )
-        .limit(limit)
-        .offset(offset)
+    return list(db.scalars(stmt.limit(limit).offset(offset)).all())
+
+
+@router.post("/by-link", response_model=TweetOut)
+async def add_by_link(
+    account_id: int,
+    payload: AddByLinkIn,
+    op: Annotated[Operator, Depends(get_current_operator)],
+    db: Annotated[Session, Depends(get_db)],
+) -> TweetIndex:
+    """Add one post to the index from a pasted link. Works for posts the
+    scraper can't reach: other people's posts, or own posts not scanned
+    yet. Author/text come from X's public oEmbed when reachable; the row
+    is still created without them so the reply target works regardless."""
+    acc = _owned_account(account_id, op, db)
+    ref = parse_tweet_ref(payload.link)
+    if ref is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "ยังไม่ใช่ลิงก์โพสต์ X ค่ะ ลองวางแบบ https://x.com/<ชื่อ>/status/<เลข>",
+        )
+
+    meta = await fetch_tweet_meta(ref.tweet_id)
+    my_handle = (acc.handle or "").lstrip("@").lower()
+    author = meta.author_handle if meta else ref.handle
+    if payload.is_own is not None:
+        is_own = payload.is_own
+    elif author is not None and my_handle:
+        is_own = author == my_handle
+    else:
+        is_own = False
+    url = meta.url if meta else ref.url
+
+    now = utcnow()
+    row = db.scalar(
+        select(TweetIndex).where(
+            TweetIndex.x_account_id == account_id,
+            TweetIndex.tweet_id == ref.tweet_id,
+        )
     )
-    return list(db.scalars(stmt).all())
+    if row is None:
+        row = TweetIndex(
+            x_account_id=account_id,
+            tweet_id=ref.tweet_id,
+            url=url,
+            text_preview=meta.text if meta else None,
+            posted_at=snowflake_time(ref.tweet_id),
+            scraped_at=now,
+            added_at=now,
+            source="manual",
+            is_own=is_own,
+        )
+        db.add(row)
+    else:
+        # Re-adding an existing row un-deletes it and refreshes what we
+        # learned; a scraped row keeps source='scan' so the sweep still
+        # governs it.
+        row.url = url
+        if meta and meta.text:
+            row.text_preview = meta.text
+        if row.posted_at is None:
+            row.posted_at = snowflake_time(ref.tweet_id)
+        row.is_own = is_own
+        row.scraped_at = now
+        row.deleted_at = None
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.delete("/{tweet_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_tweet(
+    account_id: int,
+    tweet_id: str,
+    op: Annotated[Operator, Depends(get_current_operator)],
+    db: Annotated[Session, Depends(get_db)],
+) -> None:
+    """Remove a link-added row. Scraped rows are owned by the scanner
+    (they'd just come back on the next scan), so only source='manual'
+    rows can be removed here. post_logs reference tweets by id string,
+    not FK, so a hard delete is safe."""
+    _owned_account(account_id, op, db)
+    row = db.scalar(
+        select(TweetIndex).where(
+            TweetIndex.x_account_id == account_id,
+            TweetIndex.tweet_id == tweet_id,
+        )
+    )
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "tweet not in index")
+    if row.source != "manual":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "ลบได้เฉพาะโพสต์ที่เพิ่มจาก link — โพสต์จากการสแกนจะหายเองเมื่อสแกนใหม่",
+        )
+    db.delete(row)
+    db.commit()
 
 
 class TweetCountOut(BaseModel):

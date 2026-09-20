@@ -156,6 +156,11 @@ class Prompt(Base):
     # fewest past successful replies, ties broken by oldest posted_at.
     reply_target_mode: Mapped[str] = mapped_column(String(16), default="single")
     reply_target_count: Mapped[int] = mapped_column(default=5)
+    # Original link the user pasted for a 'single' target. Display-only —
+    # the scheduler and poster key off target_tweet_id. Lets the UI show
+    # "x.com/someone/status/…" for targets that aren't in our own index
+    # (other people's posts, or own posts not scanned yet).
+    target_tweet_url: Mapped[str | None] = mapped_column(String(512), default=None)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -244,8 +249,20 @@ class TweetIndex(Base):
     is_retweet: Mapped[bool] = mapped_column(default=False)
     is_pinned: Mapped[bool] = mapped_column(default=False)
     posted_at: Mapped[datetime | None] = mapped_column(default=None, index=True)
+    # scraped_at moves on every scan/re-add; added_at is set once when the
+    # row first enters the index, so "recently added links" stays stable.
     scraped_at: Mapped[datetime] = mapped_column(default=utcnow)
+    added_at: Mapped[datetime | None] = mapped_column(default=utcnow)
     # Set when a subsequent scan no longer sees a tweet that was indexed
     # before. We don't hard-delete the row because there may still be
     # post_logs pointing at it via reply_to_tweet_id.
     deleted_at: Mapped[datetime | None] = mapped_column(default=None)
+    # 'scan'   — found on the profile timeline by the scraper; swept
+    #            (soft-deleted) when a later full scan no longer sees it.
+    # 'manual' — added by pasting a link. The scraper never walks other
+    #            people's timelines, so these are exempt from the sweep and
+    #            only go away when the user removes them.
+    source: Mapped[str] = mapped_column(String(16), default="scan")
+    # False for someone else's post added by link. Scan rows are always
+    # own (the scraper drops non-own articles before committing).
+    is_own: Mapped[bool] = mapped_column(default=True)

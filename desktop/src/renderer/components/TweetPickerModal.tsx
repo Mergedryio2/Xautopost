@@ -7,6 +7,7 @@ import {
   type XAccountOut,
 } from '../lib/api'
 import { formatRelative } from '../lib/time'
+import { handleFromUrl, parseTweetRef } from '../lib/tweetRef'
 
 type Props = {
   open: boolean
@@ -23,6 +24,11 @@ type Props = {
 
 const PAGE_SIZE = 50
 
+type OwnerFilter = 'any' | 'own' | 'other'
+type SourceFilter = 'any' | 'manual' | 'scan'
+type SortMode = 'posted' | 'added'
+type LinkOwner = 'own' | 'other'
+
 export function TweetPickerModal({
   open,
   account,
@@ -31,6 +37,14 @@ export function TweetPickerModal({
   onClose,
 }: Props) {
   const [tweets, setTweets] = useState<TweetOut[]>([])
+  const [linkInput, setLinkInput] = useState('')
+  const [linkOwner, setLinkOwner] = useState<LinkOwner>('own')
+  const [linkBusy, setLinkBusy] = useState(false)
+  const [linkError, setLinkError] = useState<string | null>(null)
+  const [ownerFilter, setOwnerFilter] = useState<OwnerFilter>('any')
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>('any')
+  const [sortMode, setSortMode] = useState<SortMode>('posted')
+  const [removingId, setRemovingId] = useState<string | null>(null)
   const [scanStatus, setScanStatus] = useState<ScanStatusOut | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -65,9 +79,14 @@ export function TweetPickerModal({
           : filterMedia === 'without'
             ? false
             : undefined
+      const is_own =
+        ownerFilter === 'own' ? true : ownerFilter === 'other' ? false : undefined
       const rows = await api.listTweets(accountId, {
         q: debouncedQuery || undefined,
         has_media,
+        is_own,
+        source: sourceFilter === 'any' ? undefined : sourceFilter,
+        sort: sortMode,
         limit: PAGE_SIZE,
         offset: nextOffset,
       })
@@ -90,7 +109,15 @@ export function TweetPickerModal({
     setHasMore(false)
     void loadPage(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, accountId, debouncedQuery, filterMedia])
+  }, [
+    open,
+    accountId,
+    debouncedQuery,
+    filterMedia,
+    ownerFilter,
+    sourceFilter,
+    sortMode,
+  ])
 
   // Initial scan status on open + poll while a scan is running. The poll is
   // cheap (single GET) and the user sees progress live without manual
@@ -156,9 +183,104 @@ export function TweetPickerModal({
     }
   }
 
+  // Reset the link row each time the modal opens so a stale error from the
+  // previous session doesn't greet the user.
+  useEffect(() => {
+    if (open) {
+      setLinkInput('')
+      setLinkOwner('own')
+      setLinkError(null)
+      setLinkBusy(false)
+    }
+  }, [open])
+
   const titleSuffix = account?.handle ? ` · ${account.handle}` : ''
   const isPicker = typeof onPick === 'function'
   const scanning = scanStatus?.running ?? false
+  const myHandle = (account?.handle ?? '').replace(/^@/, '').toLowerCase()
+
+  // Pre-select the owner dropdown from the handle in the pasted link. The
+  // user can still override — e.g. a /i/web/ link carries no handle.
+  function onLinkInputChange(value: string) {
+    setLinkInput(value)
+    if (linkError) setLinkError(null)
+    const ref = parseTweetRef(value)
+    if (ref?.handle && myHandle) {
+      setLinkOwner(ref.handle === myHandle ? 'own' : 'other')
+    }
+  }
+
+  // Save the link into the index (so it shows in the list with its
+  // owner tag and survives re-scans), then hand the row to the picker.
+  async function onUseLink() {
+    if (accountId === null || linkBusy) return
+    const ref = parseTweetRef(linkInput)
+    if (!ref) {
+      setLinkError(
+        'ยังไม่ใช่ลิงก์โพสต์ X ค่ะ ลองวางแบบ https://x.com/ชื่อ/status/เลขโพสต์',
+      )
+      return
+    }
+    setLinkError(null)
+    setLinkBusy(true)
+    try {
+      const row = await api.addTweetByLink(accountId, {
+        link: ref.url,
+        is_own: linkOwner === 'own',
+      })
+      setLinkInput('')
+      if (isPicker) {
+        onPick?.(row)
+        return
+      }
+      setOwnerFilter('any')
+      void loadPage(true)
+    } catch (e) {
+      setLinkError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLinkBusy(false)
+    }
+  }
+
+  const recentLinksActive = sourceFilter === 'manual' && sortMode === 'added'
+
+  // One-click preset for "the links I just pasted": link-added rows,
+  // newest addition first. Clicking again returns to the default view.
+  function toggleRecentLinks() {
+    if (recentLinksActive) {
+      setSourceFilter('any')
+      setSortMode('posted')
+    } else {
+      setSourceFilter('manual')
+      setSortMode('added')
+    }
+  }
+
+  const filtersActive =
+    filterMedia !== 'any' ||
+    ownerFilter !== 'any' ||
+    sourceFilter !== 'any' ||
+    sortMode !== 'posted'
+
+  function resetFilters() {
+    setFilterMedia('any')
+    setOwnerFilter('any')
+    setSourceFilter('any')
+    setSortMode('posted')
+  }
+
+  async function onRemove(t: TweetOut) {
+    if (accountId === null || removingId !== null) return
+    setRemovingId(t.tweet_id)
+    try {
+      await api.deleteTweet(accountId, t.tweet_id)
+      setTweets((prev) => prev.filter((x) => x.tweet_id !== t.tweet_id))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRemovingId(null)
+    }
+  }
 
   const idleLabel = useMemo(() => {
     if (!scanStatus) return 'ยังไม่เคยสแกน'
@@ -181,11 +303,13 @@ export function TweetPickerModal({
           <input
             className="tweet-picker-search"
             placeholder="ค้นหาในโพสต์…"
+            aria-label="ค้นหาในโพสต์"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
           <select
             className="tweet-picker-filter"
+            aria-label="ชนิดสื่อ"
             value={filterMedia}
             onChange={(e) =>
               setFilterMedia(e.target.value as 'any' | 'with' | 'without')
@@ -195,6 +319,26 @@ export function TweetPickerModal({
             <option value="with">มีรูป/วิดีโอ</option>
             <option value="without">ข้อความล้วน</option>
           </select>
+          <select
+            className="tweet-picker-filter"
+            aria-label="เจ้าของโพสต์"
+            value={ownerFilter}
+            onChange={(e) => setOwnerFilter(e.target.value as OwnerFilter)}
+          >
+            <option value="any">ทั้งเราและคนอื่น</option>
+            <option value="own">โพสต์เรา</option>
+            <option value="other">โพสต์คนอื่น</option>
+          </select>
+          <select
+            className="tweet-picker-filter"
+            aria-label="ที่มาของโพสต์"
+            value={sourceFilter}
+            onChange={(e) => setSourceFilter(e.target.value as SourceFilter)}
+          >
+            <option value="any">ทุกที่มา</option>
+            <option value="manual">จาก link</option>
+            <option value="scan">จากการสแกน</option>
+          </select>
           <button
             type="button"
             className="btn-ghost btn-sm"
@@ -203,6 +347,84 @@ export function TweetPickerModal({
           >
             {scanning ? 'กำลังสแกน…' : 'สแกนใหม่'}
           </button>
+        </div>
+
+        <div className="tweet-picker-toolbar tweet-picker-toolbar-secondary">
+          <button
+            type="button"
+            className={
+              'tweet-picker-preset' + (recentLinksActive ? ' is-active' : '')
+            }
+            aria-pressed={recentLinksActive}
+            onClick={toggleRecentLinks}
+            title="เฉพาะโพสต์ที่เพิ่มจาก link เรียงตามที่เพิ่งเพิ่ม"
+          >
+            🔗 link ที่เพิ่มล่าสุด
+          </button>
+          <select
+            className="tweet-picker-filter"
+            aria-label="การเรียงลำดับ"
+            value={sortMode}
+            onChange={(e) => setSortMode(e.target.value as SortMode)}
+          >
+            <option value="posted">เรียง: โพสต์ล่าสุดก่อน</option>
+            <option value="added">เรียง: เพิ่มล่าสุดก่อน</option>
+          </select>
+        </div>
+
+        <div className="tweet-picker-link">
+          <div className="tweet-picker-link-head">
+            <label
+              className="tweet-picker-link-label"
+              htmlFor="tweet-picker-link-input"
+            >
+              {isPicker ? 'Link ที่ต้องการตอบกลับ' : 'เพิ่มโพสต์จาก link'}
+            </label>
+            <span className="muted-note is-inline">
+              ใช้ได้ทั้งโพสต์เราและของคนอื่น ไม่ต้องสแกนก่อน และไม่หายตอนสแกนใหม่
+            </span>
+          </div>
+          <div className="tweet-picker-link-row">
+            <input
+              id="tweet-picker-link-input"
+              className="tweet-picker-search"
+              placeholder="https://x.com/ชื่อ/status/1234567890"
+              value={linkInput}
+              onChange={(e) => onLinkInputChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  void onUseLink()
+                }
+              }}
+              disabled={linkBusy}
+              aria-invalid={linkError !== null}
+              aria-describedby={linkError ? 'tweet-picker-link-error' : undefined}
+            />
+            <select
+              className="tweet-picker-filter"
+              aria-label="โพสต์นี้เป็นของใคร"
+              value={linkOwner}
+              onChange={(e) => setLinkOwner(e.target.value as LinkOwner)}
+              disabled={linkBusy}
+            >
+              <option value="own">โพสต์เรา</option>
+              <option value="other">โพสต์คนอื่น</option>
+            </select>
+            <button
+              type="button"
+              className="btn-primary btn-sm"
+              onClick={() => void onUseLink()}
+              disabled={!linkInput.trim() || linkBusy || accountId === null}
+            >
+              {linkBusy ? 'กำลังเพิ่ม…' : isPicker ? 'ใช้ link นี้' : 'เพิ่มเข้า index'}
+            </button>
+          </div>
+          {linkError && (
+            <div className="form-error" id="tweet-picker-link-error" role="alert">
+              {linkError}
+            </div>
+          )}
         </div>
 
         {scanning ? (
@@ -233,20 +455,42 @@ export function TweetPickerModal({
           <div className="tweet-picker-status">{idleLabel}</div>
         )}
 
-        {error && <div className="form-error">{error}</div>}
+        {error && <div className="form-error" role="alert">{error}</div>}
 
-        {tweets.length === 0 && !loading ? (
+        {loading && tweets.length === 0 ? (
+          <ul className="tweet-picker-list" aria-busy="true" aria-label="กำลังโหลด">
+            {[0, 1, 2].map((i) => (
+              <li key={i} className="tweet-picker-skeleton" aria-hidden="true">
+                <span style={{ width: `${72 - i * 14}%` }} />
+                <span style={{ width: '38%' }} />
+              </li>
+            ))}
+          </ul>
+        ) : tweets.length === 0 ? (
           <div className="tweet-picker-empty">
-            {scanStatus?.scanned_tweet_count === 0 && !scanning ? (
+            {scanStatus?.scanned_tweet_count === 0 && !scanning && !filtersActive ? (
               <>
                 ยังไม่เคยสแกนบัญชีนี้ · กด "สแกนใหม่" ด้านบนเพื่อให้ระบบไล่ดูโพสต์ทั้งหมด
                 <br />
-                (ใช้เวลา 1–10 นาทีขึ้นกับจำนวนโพสต์)
+                (ใช้เวลา 1–10 นาทีขึ้นกับจำนวนโพสต์) หรือวาง link โพสต์ด้านบนเพื่อเพิ่มทีละโพสต์
               </>
             ) : debouncedQuery ? (
-              `ไม่พบโพสต์ที่ตรงกับ "${debouncedQuery}"`
+              <>ไม่พบโพสต์ที่ตรงกับ "{debouncedQuery}"</>
+            ) : recentLinksActive ? (
+              <>ยังไม่มีโพสต์ที่เพิ่มจาก link · วาง link ด้านบนเพื่อเพิ่ม</>
             ) : (
-              'ไม่มีโพสต์ตรงกับตัวกรองที่เลือก'
+              <>ไม่มีโพสต์ตรงกับตัวกรองที่เลือก</>
+            )}
+            {filtersActive && (
+              <div className="tweet-picker-empty-actions">
+                <button
+                  type="button"
+                  className="btn-ghost btn-sm"
+                  onClick={resetFilters}
+                >
+                  ล้างตัวกรองทั้งหมด
+                </button>
+              </div>
             )}
           </div>
         ) : (
@@ -272,11 +516,21 @@ export function TweetPickerModal({
                     <div className="tweet-picker-item-text">
                       {t.is_pinned && (
                         <span className="tweet-badge tweet-badge-pin">
-                          📌 Pinned
+                          📌 ปักหมุด
                         </span>
                       )}
                       {t.has_media && (
                         <span className="tweet-badge">🖼 มีสื่อ</span>
+                      )}
+                      {!t.is_own && (
+                        <span className="tweet-badge tweet-badge-other">
+                          👤 คนอื่น{handleFromUrl(t.url) ? ` · ${handleFromUrl(t.url)}` : ''}
+                        </span>
+                      )}
+                      {t.source === 'manual' && (
+                        <span className="tweet-badge tweet-badge-manual">
+                          🔗 จาก link
+                        </span>
                       )}
                       {isDeleted && (
                         <span className="tweet-badge tweet-badge-del">
@@ -292,8 +546,17 @@ export function TweetPickerModal({
                       </span>
                     </div>
                     <div className="tweet-picker-item-meta">
-                      {t.posted_at ? formatRelative(t.posted_at) : '-'}
-                      {' · '}
+                      {[
+                        t.posted_at ? formatRelative(t.posted_at) : null,
+                        (sortMode === 'added' || t.source === 'manual') &&
+                        t.added_at
+                          ? `เพิ่มเมื่อ ${formatRelative(t.added_at)}`
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .map((part) => (
+                          <span key={part as string}>{part} · </span>
+                        ))}
                       <a
                         href={t.url}
                         target="_blank"
@@ -304,18 +567,35 @@ export function TweetPickerModal({
                       </a>
                     </div>
                   </div>
-                  {isPicker && (
-                    <button
-                      type="button"
-                      className={
-                        isSelected ? 'btn-primary btn-sm' : 'btn-ghost btn-sm'
-                      }
-                      onClick={() => onPick?.(t)}
-                      disabled={isDeleted}
-                    >
-                      {isSelected ? 'เลือกแล้ว' : 'เลือก'}
-                    </button>
-                  )}
+                  <div className="tweet-picker-item-actions">
+                    {isPicker && (
+                      <button
+                        type="button"
+                        className={
+                          isSelected ? 'btn-primary btn-sm' : 'btn-ghost btn-sm'
+                        }
+                        onClick={() => onPick?.(t)}
+                        disabled={isDeleted}
+                      >
+                        {isSelected ? 'เลือกแล้ว' : 'เลือก'}
+                      </button>
+                    )}
+                    {t.source === 'manual' && (
+                      <button
+                        type="button"
+                        className="btn-ghost btn-sm btn-danger"
+                        onClick={() => void onRemove(t)}
+                        disabled={removingId !== null || isSelected}
+                        title={
+                          isSelected
+                            ? 'เลือกเป็น target อยู่ — เปลี่ยน target ก่อนลบ'
+                            : 'เอาออกจาก index'
+                        }
+                      >
+                        {removingId === t.tweet_id ? 'กำลังลบ…' : 'ลบออก'}
+                      </button>
+                    )}
+                  </div>
                 </li>
               )
             })}

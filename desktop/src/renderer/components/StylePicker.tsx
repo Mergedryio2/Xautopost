@@ -13,6 +13,7 @@ import {
   type TweetOut,
   type XAccountOut,
 } from '../lib/api'
+import { shortTweetUrl } from '../lib/tweetRef'
 
 export type StyleTemplate = {
   emoji: string
@@ -412,6 +413,12 @@ function PromptForm({
   const [targetTweetId, setTargetTweetId] = useState<string | null>(
     existing?.target_tweet_id ?? null,
   )
+  // Canonical link for the single target. Set from the picked index row
+  // or the pasted link; shown on the card when the post isn't in our
+  // index (so there's no text preview to show).
+  const [targetTweetUrl, setTargetTweetUrl] = useState<string | null>(
+    existing?.target_tweet_url ?? null,
+  )
   // Default to latest_n for NEW reply prompts. The previous 'single' default
   // forced users to pick a specific tweet before save would succeed; if they
   // skipped that step the validation blocked save with an error that was
@@ -429,6 +436,9 @@ function PromptForm({
   const [replyAccounts, setReplyAccounts] = useState<XAccountOut[]>([])
   const [replyAccountId, setReplyAccountId] = useState<number | null>(null)
   const [targetPreview, setTargetPreview] = useState<TweetOut | null>(null)
+  // True while the index lookup below runs, so the "not in index" note
+  // doesn't flash for a target that is about to resolve to a preview.
+  const [resolvingPreview, setResolvingPreview] = useState(false)
   const [tweetPickerOpen, setTweetPickerOpen] = useState(false)
 
   // Load accounts on mount (reply mode needs them; cheap call for other
@@ -466,6 +476,7 @@ function PromptForm({
     }
     if (replyAccounts.length === 0) return
     let cancelled = false
+    setResolvingPreview(true)
       ; (async () => {
         for (const acc of replyAccounts) {
           try {
@@ -478,13 +489,18 @@ function PromptForm({
             if (hit) {
               setTargetPreview(hit)
               setReplyAccountId(acc.id)
+              setTargetTweetUrl((prev) => prev ?? hit.url)
+              setResolvingPreview(false)
               return
             }
           } catch {
             // ignore — try next account
           }
         }
-        if (!cancelled) setTargetPreview(null)
+        if (!cancelled) {
+          setTargetPreview(null)
+          setResolvingPreview(false)
+        }
       })()
     return () => {
       cancelled = true
@@ -601,6 +617,10 @@ function PromptForm({
         target_tweet_id:
           promptMode === 'reply' && replyTargetMode === 'single'
             ? targetTweetId
+            : null,
+        target_tweet_url:
+          promptMode === 'reply' && replyTargetMode === 'single'
+            ? targetTweetUrl
             : null,
         reply_repeat_limit: promptMode === 'reply' ? replyRepeatLimit : 0,
         reply_source: promptMode === 'reply' ? replySource : 'ai',
@@ -755,7 +775,7 @@ function PromptForm({
               <div>
                 <div className="target-mode-title">เลือกโพสต์เดียว</div>
                 <div className="target-mode-sub">
-                  reply ใต้หัวโพสต์นั้นโดยตรงทุกครั้ง
+                  เลือกจาก index หรือวาง link โพสต์
                 </div>
               </div>
             </label>
@@ -801,7 +821,7 @@ function PromptForm({
           <span className="muted-note" style={{ marginTop: 6, display: 'block' }}>
             {replyTargetMode === 'single'
               ? 'reply ทุกครั้งจะไปอยู่ใต้หัวโพสต์ที่เลือกโดยตรง ไม่ต่อสายใต้ reply เดิม'
-              : 'ระบบจะหมุนเวียน reply ตัวที่โดน reply น้อยที่สุดก่อน (กระจายให้สมดุล) ทุก reply ไปอยู่ใต้หัวโพสต์โดยตรง ไม่ต่อสายใต้ reply เดิม'}
+              : 'ระบบจะหมุนเวียน reply ตัวที่โดน reply น้อยที่สุดก่อน (กระจายให้สมดุล) รวมโพสต์ที่เพิ่มจาก link ด้วย ทุก reply ไปอยู่ใต้หัวโพสต์โดยตรง ไม่ต่อสายใต้ reply เดิม'}
           </span>
         </div>
 
@@ -849,6 +869,45 @@ function PromptForm({
                   </button>
                   <a
                     href={targetPreview.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-ghost btn-sm"
+                    style={{ textDecoration: 'none' }}
+                  >
+                    เปิดใน X ↗
+                  </a>
+                </div>
+              </div>
+            ) : targetTweetId ? (
+              <div className="tweet-target-card">
+                <div className="tweet-target-text">
+                  <span className="tweet-badge">🔗 จาก link</span>
+                  <span style={{ wordBreak: 'break-all' }}>
+                    {shortTweetUrl(
+                      targetTweetUrl ??
+                        `https://x.com/i/web/status/${targetTweetId}`,
+                    )}
+                  </span>
+                </div>
+                <span className="muted-note" style={{ marginTop: 4, display: 'block' }}>
+                  {resolvingPreview
+                    ? 'กำลังตรวจสอบกับ index…'
+                    : 'โพสต์นี้ไม่อยู่ใน index ของบัญชี — ระบบจะเปิดจาก link ตอน reply'}
+                </span>
+                <div className="form-actions" style={{ marginTop: 6 }}>
+                  <button
+                    type="button"
+                    className="btn-ghost btn-sm"
+                    onClick={() => setTweetPickerOpen(true)}
+                    disabled={replyAccountId === null}
+                  >
+                    เปลี่ยน
+                  </button>
+                  <a
+                    href={
+                      targetTweetUrl ??
+                      `https://x.com/i/web/status/${targetTweetId}`
+                    }
                     target="_blank"
                     rel="noreferrer"
                     className="btn-ghost btn-sm"
@@ -1055,6 +1114,7 @@ function PromptForm({
           selectedTweetId={targetTweetId}
           onPick={(t) => {
             setTargetTweetId(t.tweet_id)
+            setTargetTweetUrl(t.url)
             setTargetPreview(t)
             setTweetPickerOpen(false)
           }}

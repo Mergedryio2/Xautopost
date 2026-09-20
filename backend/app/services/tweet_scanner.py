@@ -4,6 +4,10 @@ out of this index, so accuracy + freshness matters more than completeness —
 X caps profile timeline at ~3,200 tweets anyway, so deep history is a lost
 cause and we don't try to work around it.
 
+Rows the user added by pasting a link (TweetIndex.source == 'manual',
+possibly someone else's post) share the table but are never touched by the
+deleted-sweep here — see api/tweets.py add_by_link.
+
 The scan runs headless and is fire-and-forget from the API's perspective:
 POST /accounts/{id}/scan-tweets spawns a background task tracked by
 ScanManager, and the UI polls GET /accounts/{id}/scan-status for progress.
@@ -125,7 +129,7 @@ class ScanManager:
             _set_account_scan_status(
                 task.account_id, "idle", count=count, completed=True
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             task.status = "error"
             task.error = f"scan timeout after {_SCAN_TIMEOUT_SEC}s"
             _set_account_scan_status(
@@ -251,55 +255,100 @@ async def _scan_account(task: ScanTask) -> int:
 
             # Bail loudly if the session expired — re-scan would just shadow
             # all tweets as 'deleted' since we'd index zero rows.
-            try:
-                await page.locator(
-                    'article[data-testid="tweet"]'
-                ).first.wait_for(timeout=20_000)
-            except Exception:  # noqa: BLE001
-                # Could be login wall, empty profile, or layout change. The
-                # SideNav button distinguishes login state from empty profile.
-                nav = page.locator('[data-testid="SideNav_NewTweet_Button"]')
+            first_article = page.locator('article[data-testid="tweet"]').first
+            nav = page.locator('[data-testid="SideNav_NewTweet_Button"]')
+            timeline_ok = False
+            for attempt in range(2):
+                try:
+                    await first_article.wait_for(timeout=20_000)
+                    timeline_ok = True
+                    break
+                except Exception:  # noqa: BLE001
+                    pass
+                # Could be login wall, empty profile, a transient "Something
+                # went wrong" or a layout change. The SideNav button
+                # distinguishes login state from the rest.
                 if not await nav.count():
                     raise RuntimeError(
                         "session หมดอายุหรือ X เปลี่ยน layout — "
                         "ลอง login บัญชีนี้ใหม่อีกครั้ง"
                     ) from None
-                # Profile is logged-in but empty/no tweets — that's a valid
-                # zero-tweet result, not an error.
+                if attempt == 0:
+                    # Logged in but the timeline didn't render: X's error
+                    # stub is common on first load. One reload clears it in
+                    # practice; a real empty profile stays empty.
+                    log.info(
+                        "scan %s: timeline empty on first load, reloading",
+                        task.account_id,
+                    )
+                    await page.reload(
+                        wait_until="domcontentloaded", timeout=30_000
+                    )
+            if not timeline_ok:
+                # Logged in, still no articles after a reload: treat as an
+                # empty profile. _commit_scan_result refuses to sweep an
+                # index that still has live rows on zero evidence.
                 return _commit_scan_result(task.account_id, {}, handle_lower)
 
             seen_ids: dict[str, dict[str, Any]] = {}
             stagnant_scrolls = 0
+            reached_end = False
+            last_checkpoint = 0
 
-            for _ in range(_MAX_SCROLL_ITERATIONS):
-                if task.cancel_event.is_set():
-                    break
-
-                new_count = await _collect_visible_tweets(
-                    page, seen_ids, handle_lower
-                )
-                task.tweets_collected = len(seen_ids)
-                # Periodic checkpoint so a crash mid-scan still leaves a
-                # partial index rather than rolling back everything.
-                if len(seen_ids) and len(seen_ids) % 100 == 0:
-                    _commit_scan_result(
-                        task.account_id, seen_ids, handle_lower, partial=True
-                    )
-
-                if new_count == 0:
-                    stagnant_scrolls += 1
-                    if stagnant_scrolls >= _END_OF_TIMELINE_THRESHOLD:
+            try:
+                for _ in range(_MAX_SCROLL_ITERATIONS):
+                    if task.cancel_event.is_set():
                         break
-                else:
-                    stagnant_scrolls = 0
 
-                # Scroll by 80% of viewport so the next batch overlaps the
-                # previous — guards against missing tweets that straddle the
-                # fold when X's virtualizer recycles DOM nodes.
-                await page.evaluate("window.scrollBy(0, window.innerHeight * 0.8)")
-                await page.wait_for_timeout(_SCROLL_SETTLE_MS)
+                    new_count = await _collect_visible_tweets(
+                        page, seen_ids, handle_lower
+                    )
+                    task.tweets_collected = len(seen_ids)
+                    # Periodic checkpoint so a crash mid-scan still leaves
+                    # a partial index rather than rolling back everything.
+                    # Tracked by count crossed, not `% 100 == 0`, which
+                    # skipped checkpoints whenever a scroll added several
+                    # ids at once.
+                    if len(seen_ids) - last_checkpoint >= 100:
+                        _commit_scan_result(
+                            task.account_id, seen_ids, handle_lower, partial=True
+                        )
+                        last_checkpoint = len(seen_ids)
 
-            return _commit_scan_result(task.account_id, seen_ids, handle_lower)
+                    if new_count == 0:
+                        stagnant_scrolls += 1
+                        if stagnant_scrolls >= _END_OF_TIMELINE_THRESHOLD:
+                            reached_end = True
+                            break
+                    else:
+                        stagnant_scrolls = 0
+
+                    # Scroll by 80% of viewport so the next batch overlaps
+                    # the previous — guards against missing tweets that
+                    # straddle the fold when X's virtualizer recycles DOM
+                    # nodes.
+                    await page.evaluate(
+                        "window.scrollBy(0, window.innerHeight * 0.8)"
+                    )
+                    await page.wait_for_timeout(_SCROLL_SETTLE_MS)
+            except asyncio.CancelledError:
+                # wait_for timeout cancels us here. Keep what we have —
+                # partial, so nothing below the scroll position is marked
+                # deleted — then let the cancellation propagate.
+                _commit_scan_result(
+                    task.account_id, seen_ids, handle_lower, partial=True
+                )
+                raise
+
+            # The deleted-sweep is only trustworthy when we actually walked
+            # to the end of the timeline. A cancel or the iteration cap
+            # leaves everything below the fold unseen.
+            return _commit_scan_result(
+                task.account_id,
+                seen_ids,
+                handle_lower,
+                partial=not reached_end,
+            )
         finally:
             try:
                 await browser.close()
@@ -307,160 +356,119 @@ async def _scan_account(task: ScanTask) -> int:
                 pass
 
 
+# One DOM pass in page context. Reading every field through Playwright
+# locators cost ~7 round-trips per article per scroll, and X's virtualizer
+# recycles article nodes between those awaits — so `articles.nth(i)` could
+# resolve to a different tweet mid-extraction and rows came back mixed or
+# missing. Doing it all in one evaluate() gives a consistent snapshot and
+# cuts a scroll from seconds to tens of milliseconds.
+#
+# Locale notes: retweet/pinned/"replying to" markers are text in the user's
+# UI language; we match English and Thai, which are the two this app's
+# users run. socialContext presence alone is locale-independent.
+_EXTRACT_JS = """
+() => {
+  const out = [];
+  const idRe = /^\\/([^\\/]+)\\/status\\/(\\d+)/;
+  const pinRe = /pinned|ปักหมุด/i;
+  const replyRe = /replying to|กำลังตอบกลับ/i;
+  for (const art of document.querySelectorAll('article[data-testid="tweet"]')) {
+    // Promoted posts sit in the timeline too; never ours.
+    if (art.querySelector('div[data-testid="placementTracking"]')) continue;
+    const link = art.querySelector('a[href*="/status/"]');
+    if (!link) continue;
+    const m = idRe.exec(link.getAttribute('href') || '');
+    if (!m) continue;
+    const ctx = art.querySelector('[data-testid="socialContext"]');
+    const ctxText = ctx ? (ctx.textContent || '') : '';
+    let isPinned = false;
+    let isRetweet = false;
+    if (ctx) {
+      // Pinned banner and "X reposted" share the socialContext slot.
+      if (pinRe.test(ctxText)) isPinned = true;
+      else isRetweet = true;
+    }
+    const textEl = art.querySelector('[data-testid="tweetText"]');
+    const timeEl = art.querySelector('time');
+    out.push({
+      tweet_id: m[2],
+      author: m[1].toLowerCase(),
+      is_pinned: isPinned,
+      is_retweet: isRetweet,
+      is_reply: replyRe.test(art.innerText || ''),
+      text_preview: textEl ? (textEl.innerText || '').slice(0, 500) : null,
+      has_media: !!art.querySelector(
+        '[data-testid="tweetPhoto"], video, [data-testid="card.wrapper"]'
+      ),
+      datetime: timeEl ? timeEl.getAttribute('datetime') : null,
+    });
+  }
+  return out;
+}
+"""
+
+
 async def _collect_visible_tweets(
     page: Page,
     seen_ids: dict[str, dict[str, Any]],
     expected_handle: str,
 ) -> int:
-    """Parse currently-rendered articles and add any unseen ids to seen_ids.
-    Returns the number of newly added ids. Tweets authored by other users
-    (retweets) are kept but flagged is_retweet=True so reply mode can skip
-    them — replying to a retweeted post replies to the *original* author,
-    which is not what 'reply to my own posts' means."""
-    articles = page.locator('article[data-testid="tweet"]')
-    count = await articles.count()
-    added = 0
+    """Snapshot the rendered articles and add any unseen ids to seen_ids.
+    Returns the number of newly added ids. Reposts are kept but flagged
+    is_retweet=True so reply mode can skip them — replying to a reposted
+    post replies to the *original* author, which is not what 'reply to my
+    own posts' means."""
+    try:
+        raw: list[dict[str, Any]] = await page.evaluate(_EXTRACT_JS)
+    except Exception:  # noqa: BLE001
+        # Navigation or a frame swap mid-evaluate; the next scroll retries.
+        return 0
 
-    for i in range(count):
-        art = articles.nth(i)
-        try:
-            data = await _extract_tweet_data(art, expected_handle)
-        except Exception:  # noqa: BLE001
-            continue
-        if data is None:
-            continue
+    added = 0
+    for item in raw:
+        data = _normalise_tweet(item, expected_handle)
         tid = data["tweet_id"]
-        if tid in seen_ids:
-            # Keep the earlier sighting's pinned flag — pinned is only
-            # detected on the first occurrence at the top of the timeline.
-            if seen_ids[tid].get("is_pinned"):
+        prev = seen_ids.get(tid)
+        if prev is not None:
+            # Pinned is only visible on the first sighting at the top of
+            # the timeline; don't let a later sighting clear it.
+            if prev.get("is_pinned"):
                 data["is_pinned"] = True
-            # But update the rest in case scroll surfaced more info.
-            seen_ids[tid].update(data)
+            if not data.get("text_preview"):
+                data["text_preview"] = prev.get("text_preview")
+            prev.update(data)
             continue
         seen_ids[tid] = data
         added += 1
-
     return added
 
 
-async def _extract_tweet_data(
-    article, expected_handle: str  # noqa: ANN001
-) -> dict[str, Any] | None:
-    # The first /status/<id> link inside the article is the tweet permalink.
-    # Quote tweets nest a second article — we only read the outer one.
-    link = article.locator('a[href*="/status/"]').first
-    href = await link.get_attribute("href", timeout=500)
-    if not href:
-        return None
-    m = _TWEET_ID_RE.search(href)
-    if not m:
-        return None
-    tweet_id = m.group(1)
-    # Author handle sits in the link's path before /status/.
-    author = href.lstrip("/").split("/status/")[0].lower()
-
-    # Promoted tweets show in profile timeline too; skip them — they're not
-    # ours and replying loops back to the advertiser's tweet.
-    is_promoted = False
-    try:
-        is_promoted = await article.locator(
-            'div[data-testid="placementTracking"]'
-        ).count() > 0
-    except Exception:  # noqa: BLE001
-        pass
-    if is_promoted:
-        return None
-
-    # X marks reposts with a "reposted" indicator at the top of the tweet
-    # block ("You reposted" / "{handle} reposted").
-    is_retweet = False
-    try:
-        is_retweet = await article.locator(
-            '[data-testid="socialContext"]'
-        ).count() > 0
-    except Exception:  # noqa: BLE001
-        pass
-
-    # Authored by us? When is_retweet is True the author handle in the link
-    # is the *original* poster, not us — so we can't infer ownership from
-    # the link alone; we need a more direct check. The default Posts tab
-    # only shows our own posts + our reposts, so falling through to "not
-    # ours" is rare unless X added a new layout case.
-    is_own = (author == expected_handle) and not is_retweet
-
-    # Pinned banner sits above the tweet, only on the first occurrence at
-    # the top of the timeline. We capture it at index time.
-    is_pinned = False
-    try:
-        # X labels the pinned banner via a "Pinned" text node inside the
-        # socialContext slot on the pinned tweet specifically.
-        ctx_text = await article.locator(
-            '[data-testid="socialContext"]'
-        ).first.text_content(timeout=200)
-        if ctx_text and "pin" in ctx_text.lower():
-            is_pinned = True
-            is_retweet = False  # pinned and retweet share the slot
-    except Exception:  # noqa: BLE001
-        pass
-
-    # is_reply: the Posts tab generally hides replies to others, but it
-    # does show our self-replies (threads). We detect "Replying to" via the
-    # tweetText link's preceding sibling. Cheap heuristic — false negatives
-    # are tolerable since reply mode targets non-reply tweets anyway.
-    is_reply = False
-    try:
-        is_reply = await article.locator(
-            'div:has-text("Replying to")'
-        ).count() > 0
-    except Exception:  # noqa: BLE001
-        pass
-
-    text_preview: str | None = None
-    try:
-        text_preview = (
-            await article.locator('[data-testid="tweetText"]')
-            .first.inner_text(timeout=500)
-        )[:500]
-    except Exception:  # noqa: BLE001
-        text_preview = None
-
-    has_media = False
-    try:
-        # Image / video / GIF / card all attach to the tweet through one of
-        # these testids; presence of any of them is enough.
-        for sel in (
-            '[data-testid="tweetPhoto"]',
-            'video',
-            '[data-testid="card.wrapper"]',
-        ):
-            if await article.locator(sel).count() > 0:
-                has_media = True
-                break
-    except Exception:  # noqa: BLE001
-        pass
+def _normalise_tweet(item: dict[str, Any], expected_handle: str) -> dict[str, Any]:
+    """Turn the raw JS record into the dict _commit_scan_result expects."""
+    tweet_id = str(item["tweet_id"])
+    is_retweet = bool(item.get("is_retweet"))
+    # When is_retweet is True the author in the permalink is the original
+    # poster, not us — so ownership is "link author == us AND not a repost".
+    # The Posts tab only shows our posts + our reposts, so a non-own
+    # non-repost row here means X changed layout.
+    is_own = (item.get("author") == expected_handle) and not is_retweet
 
     posted_at: datetime | None = None
-    try:
-        dt = await article.locator("time").first.get_attribute(
-            "datetime", timeout=500
-        )
-        if dt:
-            posted_at = datetime.fromisoformat(dt.replace("Z", "+00:00"))
-    except Exception:  # noqa: BLE001
-        pass
+    dt = item.get("datetime")
+    if dt:
+        try:
+            posted_at = datetime.fromisoformat(str(dt).replace("Z", "+00:00"))
+        except ValueError:
+            posted_at = None
 
-    # We index retweets and replies too, but flag them so the UI can hide
-    # them by default in the reply-target picker. Promoted / non-own tweets
-    # are filtered out upstream.
     return {
         "tweet_id": tweet_id,
         "url": f"https://x.com/{expected_handle}/status/{tweet_id}",
-        "text_preview": text_preview,
-        "has_media": has_media,
-        "is_reply": is_reply,
+        "text_preview": item.get("text_preview") or None,
+        "has_media": bool(item.get("has_media")),
+        "is_reply": bool(item.get("is_reply")),
         "is_retweet": is_retweet,
-        "is_pinned": is_pinned,
+        "is_pinned": bool(item.get("is_pinned")),
         "is_own": is_own,
         "posted_at": posted_at,
     }
@@ -479,7 +487,11 @@ def _commit_scan_result(
     where the user picks a retweet as a reply target (which would reply to
     the *original* author's tweet on X). Partial mode skips the
     deleted-detection step because the scan isn't done — we'd false-mark
-    everything below the current scroll position."""
+    everything below the current scroll position.
+
+    Link-added rows (source='manual') are never swept: the scraper only
+    walks our own timeline, so other people's posts are always "unseen".
+    """
     now = utcnow()
     fresh_ids: set[str] = set()
 
@@ -511,12 +523,20 @@ def _commit_scan_result(
                     is_pinned=bool(data.get("is_pinned")),
                     posted_at=data.get("posted_at"),
                     scraped_at=now,
+                    added_at=now,
                     deleted_at=None,
+                    source="scan",
+                    is_own=True,
                 )
                 db.add(row)
             else:
                 # Refresh in case the user edited the tweet (X allows
-                # short-window edits) or pin state changed.
+                # short-window edits) or pin state changed. A row the user
+                # added by link earlier is now confirmed on our timeline,
+                # so hand it to the scanner (source='scan') — the sweep
+                # will track it from here.
+                row.source = "scan"
+                row.is_own = True
                 row.url = data["url"]
                 if data.get("text_preview"):
                     row.text_preview = data["text_preview"]
@@ -529,8 +549,27 @@ def _commit_scan_result(
                 row.scraped_at = now
                 row.deleted_at = None
 
+        live_scanned = [
+            r for r in existing_rows
+            if r.source != "manual" and r.deleted_at is None
+        ]
+        if not partial and not fresh_ids and live_scanned:
+            # A full scan that saw zero own posts while the index still
+            # holds live ones is far more likely a transient X error page
+            # or a layout change than the user deleting everything. Don't
+            # soft-delete the whole index on that evidence.
+            log.warning(
+                "scan for account %s saw 0 own posts but index has %d live; "
+                "skipping deleted-sweep",
+                account_id,
+                len(live_scanned),
+            )
+            partial = True
+
         if not partial:
             for tid, row in by_id.items():
+                if row.source == "manual":
+                    continue
                 if tid not in fresh_ids and row.deleted_at is None:
                     row.deleted_at = now
 

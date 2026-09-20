@@ -776,7 +776,11 @@ def _pick_reply_target(
     the skip_reason and bail.
 
     Selection rules:
-      'single'    → prompt.target_tweet_id, validated against the index.
+      'single'    → prompt.target_tweet_id. The target may live outside
+                    our index (a pasted link to someone else's post, or
+                    an own post not scanned yet) — only an index row that
+                    is marked deleted blocks it; the poster verifies the
+                    post live on X.
       'latest_n'  → N most recently indexed live tweets, round-robin by
                     fewest past replies (ties: oldest last-reply, then
                     oldest posted_at).
@@ -798,12 +802,7 @@ def _pick_reply_target(
                 TweetIndex.tweet_id == tid,
             )
         )
-        if row is None:
-            return None, (
-                f"โพสต์ต้นทาง {tid} ไม่อยู่ใน index ของบัญชีนี้ — "
-                "สแกนใหม่หรือเลือกอันอื่น"
-            )
-        if row.deleted_at is not None:
+        if row is not None and row.deleted_at is not None:
             return None, "โพสต์ต้นทางถูกลบไปแล้ว — แก้ไขสไตล์ก่อน"
         if limit > 0:
             count = (

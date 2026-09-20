@@ -16,6 +16,7 @@ from app.db.models import ApiKey, Operator, Prompt
 from app.services.ai import generate_content
 from app.services.manual import apply_decoration, split_manual
 from app.services.media import extract_media_tokens
+from app.services.tweet_ref import parse_tweet_ref
 
 router = APIRouter(prefix="/prompts", tags=["prompts"])
 
@@ -37,6 +38,7 @@ class PromptOut(BaseModel):
     reply_source: str
     reply_target_mode: str
     reply_target_count: int
+    target_tweet_url: str | None = None
     created_at: datetime
 
 
@@ -58,6 +60,9 @@ class PromptCreate(BaseModel):
         default="single", pattern=r"^(single|latest_n|all)$"
     )
     reply_target_count: int = Field(default=5, ge=1, le=3200)
+    # Pasted link for a 'single' target. When target_tweet_id is omitted
+    # the id is derived from this; when both are given they must agree.
+    target_tweet_url: str | None = Field(default=None, max_length=512)
 
 
 class PromptUpdate(BaseModel):
@@ -78,6 +83,36 @@ class PromptUpdate(BaseModel):
         default=None, pattern=r"^(single|latest_n|all)$"
     )
     reply_target_count: int | None = Field(default=None, ge=1, le=3200)
+    target_tweet_url: str | None = Field(default=None, max_length=512)
+
+
+def _resolve_target(data: dict) -> None:  # type: ignore[type-arg]
+    """Normalise the (target_tweet_id, target_tweet_url) pair in place.
+
+    A pasted link is the friendlier input, so accept it on its own and
+    derive the id. Reject links that don't point at an X post — a typo
+    here would otherwise only surface as a scheduler skip hours later.
+    """
+    if "target_tweet_url" not in data:
+        return
+    raw_url = data["target_tweet_url"]
+    if raw_url is None or not raw_url.strip():
+        data["target_tweet_url"] = None
+        return
+    ref = parse_tweet_ref(raw_url)
+    if ref is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "ยังไม่ใช่ลิงก์โพสต์ X ค่ะ ลองวางแบบ https://x.com/<ชื่อ>/status/<เลข>",
+        )
+    given_id = data.get("target_tweet_id")
+    if given_id and given_id != ref.tweet_id:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "target_tweet_id กับ target_tweet_url ชี้คนละโพสต์",
+        )
+    data["target_tweet_id"] = ref.tweet_id
+    data["target_tweet_url"] = ref.url
 
 
 class GenerateOut(BaseModel):
@@ -110,22 +145,9 @@ def create_prompt(
     op: Annotated[Operator, Depends(get_current_operator)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Prompt:
-    p = Prompt(
-        operator_id=op.id,
-        name=payload.name,
-        body=payload.body,
-        mode=payload.mode,
-        decorate_emoji=payload.decorate_emoji,
-        decorate_letters=payload.decorate_letters,
-        provider=payload.provider,
-        model=payload.model,
-        fallback_text=payload.fallback_text,
-        target_tweet_id=payload.target_tweet_id,
-        reply_repeat_limit=payload.reply_repeat_limit,
-        reply_source=payload.reply_source,
-        reply_target_mode=payload.reply_target_mode,
-        reply_target_count=payload.reply_target_count,
-    )
+    data = payload.model_dump()
+    _resolve_target(data)
+    p = Prompt(operator_id=op.id, **data)
     db.add(p)
     db.commit()
     db.refresh(p)
@@ -142,7 +164,9 @@ def update_prompt(
     p = db.get(Prompt, prompt_id)
     if p is None or p.operator_id != op.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "prompt not found")
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    _resolve_target(data)
+    for k, v in data.items():
         setattr(p, k, v)
     db.commit()
     db.refresh(p)

@@ -2149,7 +2149,9 @@ pre.code {
 }
 
 /* Tweet picker — modal-hosted list for browsing / picking tweets that the
-   reply-mode prompt targets. Lives inside a large modal (.modal-card.is-lg). */
+   reply-mode prompt targets. Lives inside a large modal (.modal-card.is-lg).
+   Controls share the form vocabulary from .field (font, focus ring) at the
+   compact 13px size used by .filter-row. */
 .tweet-picker {
   display: flex;
   flex-direction: column;
@@ -2161,19 +2163,102 @@ pre.code {
   gap: 8px;
   align-items: center;
 }
-.tweet-picker-search {
-  flex: 1;
+.tweet-picker-toolbar-secondary {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+.tweet-picker-search,
+.tweet-picker-filter {
   padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
+  background: var(--surface-soft);
+  font-family: var(--font);
   font-size: 13px;
-  background: var(--surface);
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.tweet-picker-search {
+  flex: 1;
+  min-width: 160px;
 }
 .tweet-picker-filter {
-  padding: 8px 10px;
+  padding-right: 10px;
+  cursor: pointer;
+}
+.tweet-picker-search:focus-visible,
+.tweet-picker-filter:focus-visible {
+  border-color: var(--primary);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+.tweet-picker-search:disabled,
+.tweet-picker-filter:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.tweet-picker-search[aria-invalid='true'] {
+  border-color: var(--error-strong);
+}
+/* Preset filter toggle. Selected state stays in the soft tint so it never
+   competes with the real primary action ("ใช้ link นี้") for attention. */
+.tweet-picker-preset {
+  padding: 6px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
+  background: transparent;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.tweet-picker-preset:hover {
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+  border-color: var(--primary-soft);
+}
+.tweet-picker-preset.is-active {
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+  border-color: var(--primary);
+}
+.tweet-picker-preset:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+/* Link add-row: the one place a post enters the index without a scan.
+   A quiet tinted band, not a card, so it reads as part of the toolbar. */
+.tweet-picker-link {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--lavender-soft), var(--surface-soft));
+}
+.tweet-picker-link-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.tweet-picker-link-label {
   font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.tweet-picker-link-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.tweet-picker-link .tweet-picker-search,
+.tweet-picker-link .tweet-picker-filter {
   background: var(--surface);
 }
 .tweet-picker-status {
@@ -2187,6 +2272,36 @@ pre.code {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.6;
+}
+.tweet-picker-empty-actions {
+  margin-top: 12px;
+}
+/* Loading placeholder: two text bars per row at list-row height, so the
+   list doesn't jump when real rows arrive. Pulse is killed by the global
+   reduced-motion rule. */
+.tweet-picker-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.tweet-picker-skeleton > span {
+  display: block;
+  height: 11px;
+  border-radius: 6px;
+  background: var(--lavender-soft);
+  animation: tweetSkeletonPulse 1.4s var(--ease) infinite;
+}
+.tweet-picker-skeleton > span + span {
+  height: 9px;
+  background: var(--idle-bg);
+}
+@keyframes tweetSkeletonPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
 }
 .tweet-picker-list {
   list-style: none;
@@ -2259,8 +2374,22 @@ pre.code {
   background: var(--lavender);
 }
 .tweet-badge-del {
-  background: #ffd4d4;
-  color: #8a2a2a;
+  background: var(--error-bg);
+  color: var(--error-fg);
+}
+.tweet-badge-other {
+  background: var(--peach-soft);
+  color: var(--text-on-peach);
+}
+.tweet-badge-manual {
+  background: var(--lavender-soft);
+  color: var(--text-on-lavender);
+}
+.tweet-picker-item-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
 }
 .tweet-picker-more {
   display: flex;

@@ -105,6 +105,7 @@ export type PromptOut = {
   reply_source: ReplySource
   reply_target_mode: ReplyTargetMode
   reply_target_count: number
+  target_tweet_url: string | null
   created_at: string
 }
 
@@ -119,7 +120,13 @@ export type TweetOut = {
   is_pinned: boolean
   posted_at: string | null
   scraped_at: string
+  // When the row first entered the index (scan or link). Bangkok local.
+  added_at: string | null
   deleted_at: string | null
+  // 'scan' = found by the profile scraper; 'manual' = added by link.
+  source: 'scan' | 'manual'
+  // false = someone else's post (only possible via link).
+  is_own: boolean
 }
 
 export type ScanStatusOut = {
@@ -344,6 +351,7 @@ export const api = {
     reply_source?: ReplySource
     reply_target_mode?: ReplyTargetMode
     reply_target_count?: number
+    target_tweet_url?: string | null
   }) =>
     request<PromptOut>('/prompts', {
       method: 'POST',
@@ -365,6 +373,7 @@ export const api = {
       reply_source: ReplySource
       reply_target_mode: ReplyTargetMode
       reply_target_count: number
+      target_tweet_url: string | null
     }>,
   ) =>
     request<PromptOut>(`/prompts/${id}`, {
@@ -429,6 +438,9 @@ export const api = {
     params?: {
       q?: string
       has_media?: boolean
+      is_own?: boolean
+      source?: 'scan' | 'manual'
+      sort?: 'posted' | 'added'
       include_deleted?: boolean
       limit?: number
       offset?: number
@@ -438,6 +450,9 @@ export const api = {
     if (params?.q) search.set('q', params.q)
     if (params?.has_media !== undefined)
       search.set('has_media', String(params.has_media))
+    if (params?.is_own !== undefined) search.set('is_own', String(params.is_own))
+    if (params?.source) search.set('source', params.source)
+    if (params?.sort) search.set('sort', params.sort)
     if (params?.include_deleted) search.set('include_deleted', 'true')
     if (params?.limit) search.set('limit', String(params.limit))
     if (params?.offset) search.set('offset', String(params.offset))
@@ -448,6 +463,18 @@ export const api = {
   },
   tweetCounts: (accountId: number) =>
     request<TweetCountOut>(`/accounts/${accountId}/tweets/count`),
+  // Add one post by pasted link (own or someone else's). is_own omitted =
+  // backend decides from the post author.
+  addTweetByLink: (accountId: number, data: { link: string; is_own?: boolean }) =>
+    request<TweetOut>(`/accounts/${accountId}/tweets/by-link`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  // Only link-added rows can be removed; scanned rows belong to the scanner.
+  deleteTweet: (accountId: number, tweetId: string) =>
+    request<void>(`/accounts/${accountId}/tweets/${tweetId}`, {
+      method: 'DELETE',
+    }),
   scanTweets: (accountId: number) =>
     request<ScanStatusOut>(`/accounts/${accountId}/tweets/scan`, {
       method: 'POST',

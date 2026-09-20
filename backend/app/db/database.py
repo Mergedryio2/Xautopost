@@ -53,6 +53,7 @@ def init_db() -> None:
     _migrate_operators()
     _migrate_prompts()
     _migrate_post_logs()
+    _migrate_tweet_index()
 
 
 def _drop_legacy_column(conn, table: str, column: str) -> None:  # type: ignore[no-untyped-def]
@@ -72,6 +73,36 @@ def _drop_legacy_column(conn, table: str, column: str) -> None:  # type: ignore[
         log.info("migrated: dropped legacy column %s.%s", table, column)
     except Exception:  # noqa: BLE001
         log.exception("failed to drop legacy column %s.%s", table, column)
+
+
+def _migrate_tweet_index() -> None:
+    """Add source/is_own so link-added rows (incl. other people's posts)
+    can live next to scraped rows without being swept by the next scan."""
+    new_columns: list[tuple[str, str]] = [
+        ("source", "TEXT NOT NULL DEFAULT 'scan'"),
+        ("is_own", "BOOLEAN NOT NULL DEFAULT 1"),
+        ("added_at", "DATETIME DEFAULT NULL"),
+    ]
+    with engine.begin() as conn:
+        cols = conn.execute(text("PRAGMA table_info(tweet_index)")).fetchall()
+        existing = {row[1] for row in cols}
+        added: set[str] = set()
+        for name, ddl in new_columns:
+            if name not in existing:
+                conn.execute(
+                    text(f"ALTER TABLE tweet_index ADD COLUMN {name} {ddl}")
+                )
+                log.info("migrated: added column tweet_index.%s", name)
+                added.add(name)
+        if "added_at" in added:
+            # Best available approximation for rows that predate the column.
+            conn.execute(
+                text(
+                    "UPDATE tweet_index SET added_at = scraped_at "
+                    "WHERE added_at IS NULL"
+                )
+            )
+            log.info("migrated: backfilled tweet_index.added_at from scraped_at")
 
 
 def _migrate_post_logs() -> None:
@@ -101,6 +132,7 @@ def _migrate_prompts() -> None:
         ("reply_source", "TEXT NOT NULL DEFAULT 'ai'"),
         ("reply_target_mode", "TEXT NOT NULL DEFAULT 'single'"),
         ("reply_target_count", "INTEGER NOT NULL DEFAULT 5"),
+        ("target_tweet_url", "TEXT DEFAULT NULL"),
     ]
     with engine.begin() as conn:
         cols = conn.execute(text("PRAGMA table_info(prompts)")).fetchall()
