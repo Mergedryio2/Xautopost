@@ -50,8 +50,18 @@ export function isToday(iso: string): boolean {
   return fmt.format(d) === fmt.format(new Date())
 }
 
-export function formatHour(h: number): string {
-  return `${String(h).padStart(2, '0')}:00`
+// active_hours_start / end are minutes since midnight (60 = 01:00,
+// 1200 = 20:00). Values 0–23 are legacy rows stored as whole hours; the
+// settings modal applies the same rule when it loads them.
+export function activeMinutes(v: number): number {
+  return v <= 23 ? v * 60 : v
+}
+
+export function formatHour(v: number): string {
+  const m = activeMinutes(v)
+  const hh = Math.floor(m / 60) % 24
+  const mm = m % 60
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
 }
 
 // Render a duration in seconds as a Thai short form ("45 วินาที", "5 นาที",

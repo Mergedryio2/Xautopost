@@ -1,4 +1,5 @@
 import type { PostLogOut, XAccountOut } from './api'
+import { activeMinutes } from './time'
 
 // Backend stores naive Bangkok-local datetime; same pattern as time.ts.
 function parseBkk(iso: string): Date {
@@ -27,22 +28,27 @@ export type AccountState = {
   priority: number
 }
 
+// start / end are minutes since midnight, matching the backend's
+// _in_active_hours. activeMinutes() upgrades legacy hour values.
 function inActiveWindow(now: Date, start: number, end: number): boolean {
-  if (start === end) return true // 24h
-  const h = now.getHours()
-  if (start < end) return h >= start && h < end
-  // Overnight window e.g. 22 → 6
-  return h >= start || h < end
+  const s = activeMinutes(start)
+  const e = activeMinutes(end)
+  if (s === e) return true // 24h
+  const m = now.getHours() * 60 + now.getMinutes()
+  if (s < e) return m >= s && m < e
+  // Overnight window e.g. 22:00 → 06:00
+  return m >= s || m < e
 }
 
 function nextWindowOpen(now: Date, start: number, end: number): Date {
+  const s = activeMinutes(start)
   const next = new Date(now)
-  next.setMinutes(0, 0, 0)
-  // If we're already past today's start hour, jump to tomorrow's
-  if (now.getHours() >= start) {
+  next.setSeconds(0, 0)
+  // If we're already past today's start, jump to tomorrow's
+  if (now.getHours() * 60 + now.getMinutes() >= s) {
     next.setDate(next.getDate() + 1)
   }
-  next.setHours(start)
+  next.setHours(Math.floor(s / 60), s % 60)
   return next
 }
 
